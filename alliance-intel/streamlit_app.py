@@ -70,9 +70,12 @@ def store():
 
 
 class GroqServiceError(Exception):
-    def __init__(self, status: int, code: str = ""):
+    def __init__(self, status: int, code: str = "", message: str = ""):
         self.status = int(status)
         self.code = re.sub(r"[^a-zA-Z0-9_-]", "", str(code or ""))[:80] or "unknown"
+        # Show only a short, sanitized provider explanation to the administrator.
+        redacted = re.sub(r"gsk_[A-Za-z0-9_-]+", "[redacted]", str(message))
+        self.message = re.sub(r"[^\w\s.,:;!()/-]", " ", redacted).strip()[:280]
         super().__init__(f"Groq HTTP {self.status}: {self.code}")
 
 
@@ -124,14 +127,17 @@ def groq_plan(question: str, api_key: str, model: str):
             data = json.load(response)
     except HTTPError as exc:
         error_code = ""
+        error_message = ""
         try:
-            body = json.loads(exc.read(8192).decode("utf-8"))
+            raw = exc.read(8192)
+            body = json.loads(raw.decode("utf-8"))
             detail = body.get("error", {}) if isinstance(body, dict) else {}
             if isinstance(detail, dict):
                 error_code = str(detail.get("code") or detail.get("type") or "")
+                error_message = str(detail.get("message") or "")
         except (ValueError, UnicodeDecodeError, OSError):
-            pass
-        raise GroqServiceError(exc.code, error_code) from None
+            error_message = "No JSON error details returned by the provider"
+        raise GroqServiceError(exc.code, error_code, error_message) from None
     message = data["choices"][0]["message"]["content"]
     return json.loads(message)
 
@@ -240,6 +246,8 @@ with admin_column:
                             st.success(t(language, "groq_ok"))
                         except GroqServiceError as exc:
                             st.error(groq_error_label(exc, language))
+                            if exc.message:
+                                st.code(exc.message, language=None)
                         except (URLError, TimeoutError, ValueError, KeyError, OSError):
                             st.error(t(language, "parse_error"))
             elif entered:
@@ -295,8 +303,9 @@ with ai_tab:
         else:
             st.session_state.recent_queries.append(current)
             local_plan = local_fallback_plan(prompt)
-            if local_plan["operation"] == "teams":
-                # Equal-strength teams are a deterministic calculation; zero API calls.
+            if (local_plan["operation"] == "teams" or
+                    (local_plan["operation"] == "list" and local_plan["filters"].get("cargo"))):
+                # Team assignments and officer lookups are deterministic, no API call.
                 result = evaluate(rows, local_plan, language=language)
             elif not secret("GROQ_API_KEY"):
                 result = evaluate(rows, local_plan, language=language)

@@ -371,4 +371,13 @@ def local_fallback_plan(question: str) -> dict:
         op = "summary"
     match = re.search(r"\br([1-5])\b", question.lower())
     filters = {"cargo": "R" + match.group(1)} if match else {}
-    return {"operation": op, "metric": metric, "filters": filters}
+    # Short, specific questions about officers must work without Groq.
+    role_question = any(word in q for word in (
+        "whois", "whoare", "whichplayers", "quem", "quemsao",
+        "list", "show", "mostre", "liste", "kim", "kimler",
+        "谁是", "有哪些", "成员", "kimdir"
+    ))
+    if match and op == "unsupported" and role_question:
+        op = "list"
+    return {"operation": op, "metric": metric, "filters": filters,
+            "limit": 15 if op == "list" and match else 5}
