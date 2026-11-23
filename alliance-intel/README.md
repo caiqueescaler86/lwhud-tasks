@@ -16,6 +16,22 @@ Site Streamlit sem consulta a Supabase e sem acesso ao computador de ninguem.
 - O admin pode clicar em **Testar Groq** dentro de **CSV** para ver o codigo de erro.
 - Respostas de calculo sao geradas localmente: Groq recebe somente a pergunta, nunca os jogadores.
 
+## Profissão e nível (CSV novo do HUD)
+- Faça upload do CSV exportado na aba Alliance Intel -> Members.
+- As colunas `Profissão (código)` e `Nível profissão` são importadas e exibidas.
+- Filtre por profissão na aba Jogadores ou pergunte no chat:
+  - `Quantos jogadores da profissão tipo 2?`
+  - `Quem tem o maior nível de profissão?`
+  - `Qual a profissão de Alice?`
+  - `Quantos por profissão?`
+- A IA apenas interpreta perguntas; os cálculos são locais com o CSV.
+- Os códigos `Tipo 1` / `Tipo 2` permanecem como códigos porque
+  o mapeamento para nomes de profissões ainda não foi validado.
+- CSVs antigos sem essas colunas continuam aceitos e mostram valores vazios.
+- UID é usado apenas para deduplicação na importação e é descartado antes
+  de disponibilizar os dados no portal.
+- Testes locais opcionais, sem GitHub Actions: `cd alliance-intel && python -m unittest test_career -v`.
+
 ## Erro Groq 403
 403 significa acesso negado; pode ser bloqueio do modelo nas permissões da conta/projeto.
 Use o botao **Testar Groq** para receber o codigo especifico.

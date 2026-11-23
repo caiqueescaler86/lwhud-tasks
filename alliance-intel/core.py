@@ -16,12 +16,14 @@ MAX_ROWS = 2000
 MAX_QUESTION = 400
 
 FIELDS = (
-    "Tag", "Aliança conhecida", "Servidor", "Jogador", "Cargo", "Total Power",
+    "Tag", "Aliança conhecida", "Servidor", "Jogador", "Cargo",
+    "Profissão (código)", "Nível profissão", "Total Power",
     "HQ", "Rank Kills", "Kills", "Hero Total Power", "Rank Herói forte",
     "Herói forte", "Rank Fase", "Fase Soberano", "Rank Arena", "Score Arena",
     "Poder tropa", "Status", "Última obs.",
 )
 NUMERIC_FIELDS = {
+    "Nível profissão": "career_lv",
     "Total Power": "total_power", "HQ": "hq", "Rank Kills": "rank_kills",
     "Kills": "kills", "Hero Total Power": "hero_power", "Rank Herói forte": "rank_hero",
     "Herói forte": "strongest_hero", "Rank Fase": "rank_phase",
@@ -30,7 +32,8 @@ NUMERIC_FIELDS = {
 }
 METRICS = {v: k for k, v in NUMERIC_FIELDS.items()}
 NUMBERS = set(METRICS)
-GROUPS = {"cargo": "Cargo", "tag": "Tag", "servidor": "Servidor", "hq": "HQ", "status": "Status"}
+GROUPS = {"cargo": "Cargo", "profissao": "Profissão (código)",
+          "tag": "Tag", "servidor": "Servidor", "hq": "HQ", "status": "Status"}
 PRIVATE_IDENTIFIERS = {"uid", "playeruid", "playerid", "userid", "identificadordojogador", "idjogador"}
 UID_PATTERN = re.compile(r"(?<!\d)\d{13,20}(?!\d)")
 
@@ -43,7 +46,18 @@ def norm(value: Any) -> str:
 ALIASES = {norm(field): field for field in FIELDS}
 ALIASES.update({"rankpoder": "Total Power", "poder": "Total Power",
                 "cidade": "HQ", "herois": "Hero Total Power", "alianca": "Aliança conhecida",
-                "ultimaobs": "Última obs.", "playername": "Jogador", "nickname": "Jogador"})
+                "ultimaobs": "Última obs.", "playername": "Jogador", "nickname": "Jogador",
+                "profissao": "Profissão (código)", "profession": "Profissão (código)",
+                "careertype": "Profissão (código)", "careerlv": "Nível profissão",
+                "careerlevel": "Nível profissão", "professionlevel": "Nível profissão",
+                "niveldeprofissao": "Nível profissão"})
+
+
+def career_code(value: Any) -> int | None:
+    """Read numeric game career IDs only; do not guess their class names."""
+    value = str(value or "").strip()
+    match = re.fullmatch(r"(?:tipo|type|职业类型|职业)?\s*(\d{1,3})", value, re.IGNORECASE)
+    return int(match.group(1)) if match else None
 
 
 def safe_text(raw: Any, maximum: int = 110) -> str:
@@ -153,7 +167,7 @@ def format_value(value: float | int | None, metric: str, language: str = "pt") -
     if value is None:
         return t(language, "not_available")
     sep = "," if language in ("en", "zh") else "."
-    if metric in {"hq", "rank_kills", "rank_hero", "rank_phase", "rank_arena", "sovereign_phase", "arena_score"}:
+    if metric in {"hq", "rank_kills", "rank_hero", "rank_phase", "rank_arena", "sovereign_phase", "arena_score", "career_lv"}:
         return f"{value:,.0f}".replace(",", sep)
     if abs(value) >= 1_000_000_000:
         return f"{value / 1_000_000_000:.2f}B"
@@ -186,12 +200,28 @@ def allowed_plan(raw: Any) -> dict[str, Any]:
     for k in ("cargo", "tag", "server", "name_contains", "status"):
         if isinstance(f.get(k), str) and f[k].strip():
             filters[k] = safe_text(f[k], 50)
+    if f.get("career_type") is not None:
+        code = career_code(f["career_type"])
+        if code is None:
+            op = "unsupported"
+        else:
+            filters["career_type"] = code
+    for key in ("career_lv", "min_career_lv", "max_career_lv"):
+        if f.get(key) is not None:
+            try:
+                level = int(f[key])
+                if not 0 <= level <= 999:
+                    raise ValueError("out of range")
+                filters[key] = level
+            except (TypeError, ValueError):
+                op = "unsupported"
     if f.get("hq") is not None:
         try:
             filters["hq"] = int(f["hq"])
         except (ValueError, TypeError):
             pass
-    return {"operation": op, "metric": metric, "group_by": group, "limit": limit, "filters": filters}
+    return {"operation": op, "metric": metric, "group_by": group, "limit": limit,
+            "filters": filters, "show_career": raw.get("show_career") is True}
 
 
 def apply_filters(rows: list[dict], filters: dict) -> list[dict]:
@@ -203,6 +233,15 @@ def apply_filters(rows: list[dict], filters: dict) -> list[dict]:
         if "name_contains" in filters and norm(filters["name_contains"]) not in norm(r["Jogador"]):
             continue
         if "hq" in filters and number(r.get("HQ")) != filters["hq"]:
+            continue
+        if "career_type" in filters and career_code(r.get("Profissão (código)")) != filters["career_type"]:
+            continue
+        level = number(r.get("Nível profissão"))
+        if "career_lv" in filters and level != filters["career_lv"]:
+            continue
+        if "min_career_lv" in filters and (level is None or level < filters["min_career_lv"]):
+            continue
+        if "max_career_lv" in filters and (level is None or level > filters["max_career_lv"]):
             continue
         result.append(r)
     return result
@@ -257,7 +296,14 @@ def evaluate(rows: list[dict], raw_plan: Any, language: str = "pt") -> str:
         return t(language, "count_result", count=len(selected), total=len(rows))
     if op == "list":
         lines = [t(language, "list_header", count=len(selected))]
-        lines.extend("- " + r["Jogador"] for r in selected[:limit])
+        for r in selected[:limit]:
+            label = "- " + r["Jogador"]
+            if p["show_career"] or "career_type" in p["filters"] or metric == "career_lv":
+                profession = r.get("Profissão (código)") or t(language, "not_reported")
+                level = r.get("Nível profissão") or t(language, "not_reported")
+                label += " — " + field_title(language, "Profissão (código)") + ": " + profession
+                label += "; " + field_title(language, "Nível profissão") + ": " + level
+            lines.append(label)
         if len(selected) > limit:
             lines.append(t(language, "showing", limit=limit))
         return "\n".join(lines)
@@ -276,6 +322,11 @@ def evaluate(rows: list[dict], raw_plan: Any, language: str = "pt") -> str:
         ranks = Counter(r["Cargo"] for r in selected if r["Cargo"])
         roles = ", ".join(f"{r}: {n}" for r, n in sorted(ranks.items())) or t(language, "not_reported")
         lines.append(t(language, "summary_roles", roles=roles))
+        careers = Counter(r.get("Profissão (código)") for r in selected
+                          if r.get("Profissão (código)"))
+        if careers:
+            counts = ", ".join(f"{code}: {count}" for code, count in sorted(careers.items()))
+            lines.append(t(language, "summary_careers", careers=counts))
         lines.append(t(language, "missing_not_zero"))
         return "\n".join(lines)
     if op == "group":
@@ -340,8 +391,14 @@ def local_fallback_plan(question: str) -> dict:
         digits = re.search(r"(?<!\d)(1[0-2]|[2-9])(?!\d)", q)
         team_count = int(digits.group(1)) if digits else 6
         return {"operation": "teams", "metric": "total_power", "limit": team_count, "filters": {}}
-    metric = "total_power"
-    if any(w in q for w in ("kill", "abate", "击杀", "击败", "oldur")):
+    career_terms = ("profissao", "profissoes", "profession", "career", "meslek", "职业")
+    career_asked = any(w in q for w in career_terms)
+    career_level_asked = career_asked and any(w in q for w in (
+        "nivel", "level", "seviy", "等级", "级别"))
+    metric = "career_lv" if career_level_asked else "total_power"
+    if career_level_asked:
+        pass
+    elif any(w in q for w in ("kill", "abate", "击杀", "击败", "oldur")):
         metric = "kills"
     elif any(w in q for w in ("tropa", "troop", "birlik", "部队")):
         metric = "troop_power"
@@ -371,6 +428,22 @@ def local_fallback_plan(question: str) -> dict:
         op = "summary"
     match = re.search(r"\br([1-5])\b", question.lower())
     filters = {"cargo": "R" + match.group(1)} if match else {}
+    if career_asked:
+        match_type = re.search(r"(?:tipo|type|职业类型|职业)\s*(\d{1,3})", question, re.IGNORECASE)
+        if match_type:
+            filters["career_type"] = int(match_type.group(1))
+        if "porprofissao" in q or "cadaprofissao" in q or "byprofession" in q or "按职业" in q:
+            op = "group" if op in ("count", "unsupported") else op
+            metric = "career_lv" if op == "group" else metric
+        elif op == "unsupported":
+            op = "list"
+        if "career_type" not in filters:
+            name_match = re.search(
+                r"(?:profiss[aã]o|profession|career|meslek)\s+(?:do|da|de|of|for)\s+"
+                r"(?:(?:jogador|jogadora|player|oyuncu)\s+)?(.+?)\s*[?.!]*$",
+                question, re.IGNORECASE)
+            if name_match:
+                filters["name_contains"] = name_match.group(1).strip()[:50]
     # Short, specific questions about officers must work without Groq.
     role_question = any(word in q for word in (
         "whois", "whoare", "whichplayers", "quem", "quemsao",
@@ -380,4 +453,6 @@ def local_fallback_plan(question: str) -> dict:
     if match and op == "unsupported" and role_question:
         op = "list"
     return {"operation": op, "metric": metric, "filters": filters,
+            "show_career": career_asked,
+            "group_by": "profissao" if op == "group" and career_asked else "cargo",
             "limit": 15 if op == "list" and match else 5}

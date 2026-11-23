@@ -86,14 +86,28 @@ def groq_plan(question: str, api_key: str, model: str):
         "Simplified Chinese or Turkish. Return ONLY a JSON object with operation, "
         "metric, limit, group_by, filters. Allowed operation: summary, top, bottom, "
         "count, list, average, sum, group, teams, unsupported. Allowed metric: "
-        "total_power, kills, troop_power, hero_power, strongest_hero, "
+        "total_power, kills, troop_power, hero_power, strongest_hero, career_lv, "
         "sovereign_phase, hq, arena_score, rank_kills, rank_arena, rank_hero, "
-        "rank_phase. group_by: cargo, tag, servidor, hq, status. filters: "
-        "cargo, tag, server, name_contains, status, hq. "
+        "rank_phase. group_by: cargo, profissao, tag, servidor, hq, status. filters: "
+        "cargo, tag, server, name_contains, status, hq, career_type, " 
+        "career_lv, min_career_lv, max_career_lv. " 
+        "For career_type, use only the numeric code (e.g. 1 or 2), not a " 
+        "guessed profession name. In the CSV the code appears as 'Tipo 1'. " 
+        "career_lv means profession level, not HQ or alliance rank. " 
+        "Use show_career=true for questions about a player's profession or level. "
         "Example: 'top five R4 by kills' -> "
         "{\"operation\":\"top\",\"metric\":\"kills\",\"limit\":5,\"filters\":{\"cargo\":\"R4\"}}. "
         "Example: 'average power by rank' -> "
         "{\"operation\":\"group\",\"metric\":\"total_power\",\"group_by\":\"cargo\",\"filters\":{}}. "
+        "Example: 'which players are profession type 2?' -> "
+        "{\"operation\":\"list\",\"metric\":\"career_lv\",\"limit\":15,"
+        "\"filters\":{\"career_type\":2},\"show_career\":true}. "
+        "Example: 'which profession does Alice have?' -> "
+        "{\"operation\":\"list\",\"metric\":\"career_lv\",\"filters\":"
+        "{\"name_contains\":\"Alice\"},\"show_career\":true}. "
+        "Example: 'how many of each profession?' -> "
+        "{\"operation\":\"group\",\"metric\":\"career_lv\","
+        "\"group_by\":\"profissao\",\"filters\":{}}. "
         "Example: 'make 6 balanced teams' -> "
         "{\"operation\":\"teams\",\"metric\":\"total_power\",\"limit\":6,\"filters\":{}}. "
         "If the question asks for secret identifiers, credentials, private records, "
@@ -344,23 +358,42 @@ with ai_tab:
         st.rerun()
 
 with players_tab:
-    filters, role_select = st.columns([3, 1])
-    with filters:
+    search_col, role_col, profession_col = st.columns([3, 1, 1])
+    with search_col:
         query = st.text_input(t(language, "player_search"), key="member_filter")
-    with role_select:
+    with role_col:
         roles = sorted({row["Cargo"] for row in rows if row.get("Cargo")})
         selected_role = st.selectbox(
-            t(language, "role"), [""] + roles,
+            t(language, "role"), [""] + roles, key="member_role",
+            format_func=lambda v: t(language, "all") if not v else v,
+        )
+    with profession_col:
+        professions = sorted({row["Profissão (código)"] for row in rows
+                              if row.get("Profissão (código)")})
+        selected_profession = st.selectbox(
+            field_title(language, "Profissão (código)"), [""] + professions,
+            key="member_career_type",
             format_func=lambda v: t(language, "all") if not v else v,
         )
     subset = [
         r for r in rows if (not query or norm(query) in norm(r["Jogador"]))
         and (not selected_role or r["Cargo"] == selected_role)
+        and (not selected_profession or r["Profissão (código)"] == selected_profession)
     ]
-    columns = ("Jogador", "Cargo", "Total Power", "Kills", "HQ", "Hero Total Power", "Poder tropa")
+    columns = ("Jogador", "Cargo", "Profissão (código)", "Nível profissão",
+               "Total Power", "Kills", "HQ", "Hero Total Power", "Poder tropa")
+    displayed_rows = []
+    for row in subset:
+        item = {name: row.get(name, "") for name in columns}
+        level = str(item["Nível profissão"]).strip()
+        item["Nível profissão"] = int(level) if level.isdecimal() else None
+        displayed_rows.append(item)
+    configs = {name: st.column_config.TextColumn(field_title(language, name))
+               for name in columns if name != "Nível profissão"}
+    configs["Nível profissão"] = st.column_config.NumberColumn(
+        field_title(language, "Nível profissão"), format="%d",
+    )
     st.dataframe(
-        [{name: row.get(name, "") for name in columns} for row in subset],
-        column_config={name: st.column_config.TextColumn(field_title(language, name))
-                       for name in columns},
+        displayed_rows, column_config=configs,
         use_container_width=True, hide_index=True, height=540,
     )
