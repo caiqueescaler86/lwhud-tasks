@@ -425,3 +425,14 @@ MINIMAL_UI = {
 }
 for _code, _messages in MINIMAL_UI.items():
     TEXT[_code].update(_messages)
+
+
+# Error when the Groq edge rejects a default HTTP client's signature.
+CLOUDFLARE_MESSAGES = {
+    "pt": "Groq bloqueou a assinatura da conexão (Cloudflare 1010). O portal já usa um identificador próprio; teste novamente. Se persistir, contacte o suporte da Groq.",
+    "en": "Groq blocked the HTTP client signature (Cloudflare 1010). The portal now identifies itself correctly; retry. If this persists, contact Groq support.",
+    "zh": "Groq 拦截了客户端请求特征（Cloudflare 1010）。门户现已使用独立的客户端标识，请重试。如仍失败，请联系 Groq 支持。",
+    "tr": "Groq istemci imzasını engelledi (Cloudflare 1010). Portal artık kendi istemci kimliğini kullanıyor; tekrar deneyin. Devam ederse Groq destek ekibine başvurun.",
+}
+for _lang, _label in CLOUDFLARE_MESSAGES.items():
+    TEXT[_lang]["groq_cloudflare_1010"] = _label

@@ -119,6 +119,9 @@ def groq_plan(question: str, api_key: str, model: str):
             "Authorization": "Bearer " + api_key,
             "Content-Type": "application/json",
             "Accept": "application/json",
+            # Groq's Cloudflare may reject urllib's default Python-urllib User-Agent.
+            # Identify our own application rather than impersonating a browser.
+            "User-Agent": "AllianceIntel/1.1",
         },
         method="POST",
     )
@@ -128,6 +131,7 @@ def groq_plan(question: str, api_key: str, model: str):
     except HTTPError as exc:
         error_code = ""
         error_message = ""
+        raw = b""
         try:
             raw = exc.read(8192)
             body = json.loads(raw.decode("utf-8"))
@@ -136,7 +140,14 @@ def groq_plan(question: str, api_key: str, model: str):
                 error_code = str(detail.get("code") or detail.get("type") or "")
                 error_message = str(detail.get("message") or "")
         except (ValueError, UnicodeDecodeError, OSError):
-            error_message = "No JSON error details returned by the provider"
+            # A plain-text 'error code: 1010' is a Cloudflare client-signature block,
+            # not proof that the Groq key or API quota is exhausted.
+            lower = raw.lower()
+            if b"1010" in lower and (b"error code" in lower or b"cloudflare" in lower):
+                error_code = "cloudflare_1010"
+            elif exc.code == 403:
+                error_code = "non_json_403"
+            error_message = "Provider returned a non-JSON error response"
         raise GroqServiceError(exc.code, error_code, error_message) from None
     message = data["choices"][0]["message"]["content"]
     return json.loads(message)
@@ -144,6 +155,8 @@ def groq_plan(question: str, api_key: str, model: str):
 
 def groq_error_label(error: GroqServiceError, language: str) -> str:
     if error.status == 403:
+        if error.code == "cloudflare_1010":
+            return t(language, "groq_cloudflare_1010")
         if error.code in ("model_permission_blocked_org", "model_permission_blocked_project"):
             return t(language, "groq_model_denied", code=error.code)
         return t(language, "groq_denied", code=error.code)
