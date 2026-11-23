@@ -158,6 +158,8 @@ def groq_model() -> str:
 
 
 def require_access_code(language: str):
+    if st.session_state.pop("clear_admin_on_login", False):
+        st.session_state.pop("admin_password", None)
     password = secret("ACCESS_PASSWORD")
     admin = secret("ADMIN_PASSWORD")
     if len(password) < 12:
@@ -243,9 +245,11 @@ with admin_column:
             elif entered:
                 st.error(t(language, "admin_wrong"))
         if st.button(t(language, "logout")):
+            # Clear admin state on the NEXT rerun, before the password widget renders.
             st.session_state.access_granted = False
             st.session_state.access_fingerprint = ""
             st.session_state.history = []
+            st.session_state.clear_admin_on_login = True
             st.rerun()
 
 rows, meta = shared.snapshot()
