@@ -1,35 +1,32 @@
-# Alliance Intel — site temporario
+# Alliance Intel (temporario)
 
-Este aplicativo Streamlit vive numa pasta independente do site de tarefas. O GitHub hospeda somente o codigo (sem CSV, UID, senha ou chave Groq). Nao faz consultas ao Supabase.
+Site Streamlit sem consulta a Supabase e sem acesso ao computador de ninguem.
 
-## Colocar no ar (uma vez)
+## Publicar / atualizar
+- App: `alliance-intel/streamlit_app.py` neste repositorio.
+- Streamlit Secrets obrigatorios: `ACCESS_PASSWORD` (12+ caracteres), `ADMIN_PASSWORD` (diferente) e `GROQ_API_KEY`.
+- Opcional: `GROQ_MODEL = "openai/gpt-oss-20b"`. Modelos previstos: `openai/gpt-oss-120b`, `qwen/qwen3.8-27b`.
+- No site: informe ACCESS_PASSWORD, abra **CSV** (canto superior direito), digite ADMIN_PASSWORD e envie o CSV exportado do Alliance Intel.
 
-1. Abra https://share.streamlit.io e entre com sua conta GitHub.
-2. Clique em **Create app / Deploy**. Escolha repositorio `caiqueescaler86/lwhud-tasks`, branch `main`, arquivo `alliance-intel/streamlit_app.py`. Publique como app **public**: o app pede codigo proprio, sem email aos convidados.
-3. Em **Advanced settings -> Secrets** (ou App settings -> Secrets), informe os valores escolhidos:
+## Interface
+- Tela principal: chat IA.
+- Aba Jogadores: busca, filtro por cargo e colunas essenciais.
+- Seletor de idioma: PT / EN / ZH simplificado / TR.
+- 6 equipes equilibradas por poder podem ser geradas mesmo sem Groq.
+- O admin pode clicar em **Testar Groq** dentro de **CSV** para ver o codigo de erro.
+- Respostas de calculo sao geradas localmente: Groq recebe somente a pergunta, nunca os jogadores.
 
-```toml
-ACCESS_PASSWORD = "COLOQUE-UM-CODIGO-LONGO-PARA-ALIANCA"
-ADMIN_PASSWORD = "COLOQUE-OUTRA-SENHA-APENAS-SUA"
-GROQ_API_KEY = "SUA-CHAVE-DO-GROQ"
-```
+## Erro Groq 403
+403 significa acesso negado; pode ser bloqueio do modelo nas permissões da conta/projeto.
+Use o botao **Testar Groq** para receber o codigo especifico.
+Confira https://console.groq.com/settings/limits e os limites de gastos.
+Uma troca de modelo so ajuda se o novo estiver permitido no seu projeto.
+Nao ha como confirmar a autorizacao sem a chave configurada no proprio Streamlit.
 
-4. Abra seu site, entre com `ACCESS_PASSWORD`; na barra lateral informe `ADMIN_PASSWORD` e envie o CSV exportado no Alliance Intel. Compartilhe so o link e o codigo de acesso com a alianca.
-
-## Limitacoes importantes
-
-- O repositorio e PUBLICO. NUNCA commit CSV, senhas, chaves ou `.streamlit/secrets.toml`.
-- O upload fica em memoria compartilhada; depois de reiniciar a instancia, voce precisara enviar o CSV novamente.
-- A senha compartilhada pode ser repassada; nao e autenticacao individual.
-- O Groq recebe a pergunta, mas nao recebe dados de jogadores: interpreta uma consulta predefinida e o Python calcula as respostas. Nao executa scripts/SQL de nenhum tipo.
-- Ha limites de tamanho do upload e consultas para reduzir abuso. Sem protecao absoluta contra ataques ou abusos de cota.
-- Nao e necessario criar GitHub Actions ou modificar o site de tarefas.
-
-## Idiomas / Languages
-
-O site suporta Português, English, 简体中文 (chinês simplificado) e Türkçe.
-O seletor 🌐 aparece na barra lateral, inclusive na tela de login.
-Os nomes dos jogadores e os dados do CSV permanecem originais; menus,
-colunas e respostas calculadas são apresentados no idioma selecionado.
-Groq aceita perguntas nos quatro idiomas, mas nunca recebe registros ou UIDs.
-Não é preciso adicionar novos Secrets nem habilitar GitHub Actions.
+## Privacidade e limites
+- Nao adicione CSV, UID, senha, chave Groq ou Secrets ao GitHub. Este repositorio e publico.
+- UID e excluido na ingestao; dados ficam em memoria na instancia Streamlit.
+- O upload nao e persistente. Apos reiniciar o site, o administrador deve enviar outro CSV.
+- Uma senha de acesso compartilhada pode ser repassada. E um sistema temporario, sem contas individuais.
+- Entrada do CSV e perguntas nunca sao executadas como SQL ou Python.
+- Nenhuma GitHub Action, novo banco ou infraestrutura adicional e necessaria.

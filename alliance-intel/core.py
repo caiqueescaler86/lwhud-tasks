@@ -168,7 +168,7 @@ def allowed_plan(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise ValueError("Plano de consulta inválido.")
     op = str(raw.get("operation", "unsupported"))
-    if op not in {"summary", "top", "bottom", "count", "list", "average", "sum", "group", "unsupported"}:
+    if op not in {"summary", "top", "bottom", "count", "list", "average", "sum", "group", "teams", "unsupported"}:
         op = "unsupported"
     metric = str(raw.get("metric", "total_power"))
     if metric not in NUMBERS:
@@ -178,7 +178,7 @@ def allowed_plan(raw: Any) -> dict[str, Any]:
     if group not in GROUPS:
         group = "cargo"
     try:
-        limit = max(1, min(15, int(raw.get("limit", 5))))
+        limit = max(2 if op == "teams" else 1, min(12 if op == "teams" else 15, int(raw.get("limit", 5))))
     except (ValueError, TypeError):
         limit = 5
     f = raw.get("filters") if isinstance(raw.get("filters"), dict) else {}
@@ -208,6 +208,40 @@ def apply_filters(rows: list[dict], filters: dict) -> list[dict]:
     return result
 
 
+def create_balanced_teams(rows: list[dict], count: int, language: str = "pt") -> str:
+    """Deterministic, approximate balance by total power; never calls the model or DB."""
+    count = max(2, min(12, int(count)))
+    ranked = [(row, number(row.get("Total Power"))) for row in rows]
+    known = sorted(((row, value) for row, value in ranked if value is not None and value >= 0),
+                   key=lambda item: (-item[1], item[0]["Jogador"].casefold()))
+    if len(known) < count:
+        return t(language, "teams_insufficient", players=len(known), teams=count)
+
+    # Keep squad sizes within one player, then assign highest powers to the lowest
+    # running team total that still has a free slot.
+    base, extras = divmod(len(known), count)
+    capacities = [base + (index < extras) for index in range(count)]
+    groups = [[] for _ in range(count)]
+    totals = [0.0] * count
+    for row, power in known:
+        available = [i for i in range(count) if len(groups[i]) < capacities[i]]
+        index = min(available, key=lambda i: (totals[i], len(groups[i]), i))
+        groups[index].append((row, power))
+        totals[index] += power
+
+    output = [t(language, "teams_summary", teams=count, players=len(known))]
+    for i, group in enumerate(groups):
+        output.append(t(language, "teams_label", index=i + 1, count=len(group),
+                        power=format_value(totals[i], "total_power", language)))
+        output.extend("• " + row["Jogador"] + " — " +
+                      format_value(power, "total_power", language) for row, power in group)
+        output.append("")
+    excluded = len(rows) - len(known)
+    if excluded:
+        output.append(t(language, "teams_missing", count=excluded))
+    return "\n".join(output).rstrip()
+
+
 def evaluate(rows: list[dict], raw_plan: Any, language: str = "pt") -> str:
     """Evaluate allowlisted, deterministic queries and format in the chosen UI language."""
     p = allowed_plan(raw_plan)
@@ -217,6 +251,8 @@ def evaluate(rows: list[dict], raw_plan: Any, language: str = "pt") -> str:
         return t(language, "unsupported")
     if not selected:
         return t(language, "no_results")
+    if op == "teams":
+        return create_balanced_teams(selected, limit, language)
     if op == "count":
         return t(language, "count_result", count=len(selected), total=len(rows))
     if op == "list":
@@ -297,6 +333,13 @@ def evaluate(rows: list[dict], raw_plan: Any, language: str = "pt") -> str:
 def local_fallback_plan(question: str) -> dict:
     """Conservative no-API fallback for Portuguese, English, Chinese and Turkish."""
     q = norm(question)
+    # Creating equal-strength squads is fully deterministic: Groq is not needed.
+    team_words = ("teams", "team", "squad", "equipes", "equipe", "times",
+                  "takim", "ekip", "队伍", "战队", "小队", "队")
+    if any(w in q for w in team_words):
+        digits = re.search(r"(?<!\d)(1[0-2]|[2-9])(?!\d)", q)
+        team_count = int(digits.group(1)) if digits else 6
+        return {"operation": "teams", "metric": "total_power", "limit": team_count, "filters": {}}
     metric = "total_power"
     if any(w in q for w in ("kill", "abate", "击杀", "击败", "oldur")):
         metric = "kills"
