@@ -448,3 +448,16 @@ CLOUDFLARE_MESSAGES = {
 }
 for _lang, _label in CLOUDFLARE_MESSAGES.items():
     TEXT[_lang]["groq_cloudflare_1010"] = _label
+
+
+# Verified player profession types, supplied by the alliance administrator.
+# Codes stay in the CSV and query filters; translate names only when displaying.
+VERIFIED_CAREER_NAMES = {
+    "pt": {101: "Engenheiro", 102: "War Leader"},
+    "en": {101: "Engineer", 102: "War Leader"},
+    "zh": {101: "工程师", 102: "战争领袖"},
+    "tr": {101: "Mühendis", 102: "Savaş Lideri"},
+}
+for _lang, _names in VERIFIED_CAREER_NAMES.items():
+    for _career_type, _career_name in _names.items():
+        TEXT[_lang][f"career_{_career_type}"] = _career_name

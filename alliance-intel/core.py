@@ -53,11 +53,33 @@ ALIASES.update({"rankpoder": "Total Power", "poder": "Total Power",
                 "niveldeprofissao": "Nível profissão"})
 
 
+CAREER_ALIASES = {
+    "engenheiro": 101, "engenheiros": 101, "engineer": 101, "engineers": 101,
+    "muhendis": 101, "工程师": 101,
+    "warleader": 102, "warleaders": 102, "liderdeguerra": 102,
+    "lideresdeguerra": 102, "savaslideri": 102, "战争领袖": 102,
+}
+
+
 def career_code(value: Any) -> int | None:
-    """Read numeric game career IDs only; do not guess their class names."""
+    """Interpret verified numeric type codes and their known localized names."""
     value = str(value or "").strip()
     match = re.fullmatch(r"(?:tipo|type|职业类型|职业)?\s*(\d{1,3})", value, re.IGNORECASE)
-    return int(match.group(1)) if match else None
+    if match:
+        return int(match.group(1))
+    return CAREER_ALIASES.get(norm(value))
+
+
+def career_label(value: Any, language: str = "pt") -> str:
+    """Display verified professions while preserving the original numeric type."""
+    value = str(value or "").strip()
+    if not value:
+        return ""
+    code = career_code(value)
+    if code in (101, 102):
+        return f"{t(language, f'career_{code}')} ({code})"
+    # Do not invent names for unmapped codes.
+    return safe_text(value)
 
 
 def safe_text(raw: Any, maximum: int = 110) -> str:
@@ -299,7 +321,7 @@ def evaluate(rows: list[dict], raw_plan: Any, language: str = "pt") -> str:
         for r in selected[:limit]:
             label = "- " + r["Jogador"]
             if p["show_career"] or "career_type" in p["filters"] or metric == "career_lv":
-                profession = r.get("Profissão (código)") or t(language, "not_reported")
+                profession = career_label(r.get("Profissão (código)"), language) or t(language, "not_reported")
                 level = r.get("Nível profissão") or t(language, "not_reported")
                 label += " — " + field_title(language, "Profissão (código)") + ": " + profession
                 label += "; " + field_title(language, "Nível profissão") + ": " + level
@@ -322,7 +344,7 @@ def evaluate(rows: list[dict], raw_plan: Any, language: str = "pt") -> str:
         ranks = Counter(r["Cargo"] for r in selected if r["Cargo"])
         roles = ", ".join(f"{r}: {n}" for r, n in sorted(ranks.items())) or t(language, "not_reported")
         lines.append(t(language, "summary_roles", roles=roles))
-        careers = Counter(r.get("Profissão (código)") for r in selected
+        careers = Counter(career_label(r.get("Profissão (código)"), language) for r in selected
                           if r.get("Profissão (código)"))
         if careers:
             counts = ", ".join(f"{code}: {count}" for code, count in sorted(careers.items()))
@@ -333,7 +355,9 @@ def evaluate(rows: list[dict], raw_plan: Any, language: str = "pt") -> str:
         from collections import defaultdict
         buckets = defaultdict(list)
         for row in selected:
-            buckets[row.get(GROUPS[group]) or t(language, "not_reported")].append(row)
+            raw_group = row.get(GROUPS[group])
+            group_name = career_label(raw_group, language) if group == "profissao" else raw_group
+            buckets[group_name or t(language, "not_reported")].append(row)
         lines = []
         for name, subset in sorted(buckets.items(), key=lambda kv: (-len(kv[1]), str(kv[0]))):
             values = [number(r[METRICS[metric]]) for r in subset]
@@ -391,7 +415,9 @@ def local_fallback_plan(question: str) -> dict:
         digits = re.search(r"(?<!\d)(1[0-2]|[2-9])(?!\d)", q)
         team_count = int(digits.group(1)) if digits else 6
         return {"operation": "teams", "metric": "total_power", "limit": team_count, "filters": {}}
-    career_terms = ("profissao", "profissoes", "profession", "career", "meslek", "职业")
+    career_terms = ("profissao", "profissoes", "profession", "career", "meslek", "职业",
+                    "engenheiro", "engineer", "muhendis", "工程师",
+                    "warleader", "liderdeguerra", "savaslideri", "战争领袖")
     career_asked = any(w in q for w in career_terms)
     career_level_asked = career_asked and any(w in q for w in (
         "nivel", "level", "seviy", "等级", "级别"))
@@ -432,6 +458,12 @@ def local_fallback_plan(question: str) -> dict:
         match_type = re.search(r"(?:tipo|type|职业类型|职业)\s*(\d{1,3})", question, re.IGNORECASE)
         if match_type:
             filters["career_type"] = int(match_type.group(1))
+        else:
+            # Support direct questions such as "quantos War Leaders?".
+            for name, code in sorted(CAREER_ALIASES.items(), key=lambda item: -len(item[0])):
+                if name in q:
+                    filters["career_type"] = code
+                    break
         if "porprofissao" in q or "cadaprofissao" in q or "byprofession" in q or "按职业" in q:
             op = "group" if op in ("count", "unsupported") else op
             metric = "career_lv" if op == "group" else metric

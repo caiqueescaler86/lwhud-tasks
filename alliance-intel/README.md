@@ -25,8 +25,12 @@ Site Streamlit sem consulta a Supabase e sem acesso ao computador de ninguem.
   - `Qual a profissão de Alice?`
   - `Quantos por profissão?`
 - A IA apenas interpreta perguntas; os cálculos são locais com o CSV.
-- Os códigos `Tipo 1` / `Tipo 2` permanecem como códigos porque
-  o mapeamento para nomes de profissões ainda não foi validado.
+- Mapeamento confirmado pelo administrador:
+  - `Tipo 101` = Engenheiro (Engineer).
+  - `Tipo 102` = War Leader.
+- Os nomes são mostrados no idioma selecionado, preservando o código entre parênteses.
+- Outros códigos permanecem numéricos, sem adivinhação.
+- O CSV não é alterado nem publicado no GitHub.
 - CSVs antigos sem essas colunas continuam aceitos e mostram valores vazios.
 - UID é usado apenas para deduplicação na importação e é descartado antes
   de disponibilizar os dados no portal.

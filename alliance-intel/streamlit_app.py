@@ -15,7 +15,7 @@ from urllib.request import Request, urlopen
 import streamlit as st
 
 from core import (
-    MAX_QUESTION, UID_PATTERN, evaluate, local_fallback_plan, norm, sanitize_csv,
+    MAX_QUESTION, UID_PATTERN, career_label, evaluate, local_fallback_plan, norm, sanitize_csv,
 )
 from i18n import LANGUAGES, field_title, t
 
@@ -91,17 +91,20 @@ def groq_plan(question: str, api_key: str, model: str):
         "rank_phase. group_by: cargo, profissao, tag, servidor, hq, status. filters: "
         "cargo, tag, server, name_contains, status, hq, career_type, " 
         "career_lv, min_career_lv, max_career_lv. " 
-        "For career_type, use only the numeric code (e.g. 1 or 2), not a " 
-        "guessed profession name. In the CSV the code appears as 'Tipo 1'. " 
+        "The verified professions are career_type 101 = Engineer (Engenheiro, 工程师, " 
+        "Mühendis) and 102 = War Leader (Lider de Guerra, 战争领袖, Savaş Lideri). " 
+        "For career_type filters, return the numeric code 101 or 102, never the " 
+        "translated name. The CSV uses 'Tipo 101' or 'Tipo 102'. " 
+        "Do not guess any names for other career codes. " 
         "career_lv means profession level, not HQ or alliance rank. " 
         "Use show_career=true for questions about a player's profession or level. "
         "Example: 'top five R4 by kills' -> "
         "{\"operation\":\"top\",\"metric\":\"kills\",\"limit\":5,\"filters\":{\"cargo\":\"R4\"}}. "
         "Example: 'average power by rank' -> "
         "{\"operation\":\"group\",\"metric\":\"total_power\",\"group_by\":\"cargo\",\"filters\":{}}. "
-        "Example: 'which players are profession type 2?' -> "
+        "Example: 'which players are War Leaders?' -> "
         "{\"operation\":\"list\",\"metric\":\"career_lv\",\"limit\":15,"
-        "\"filters\":{\"career_type\":2},\"show_career\":true}. "
+        "\"filters\":{\"career_type\":102},\"show_career\":true}. "
         "Example: 'which profession does Alice have?' -> "
         "{\"operation\":\"list\",\"metric\":\"career_lv\",\"filters\":"
         "{\"name_contains\":\"Alice\"},\"show_career\":true}. "
@@ -331,7 +334,8 @@ with ai_tab:
             st.session_state.recent_queries.append(current)
             local_plan = local_fallback_plan(prompt)
             if (local_plan["operation"] == "teams" or
-                    (local_plan["operation"] == "list" and local_plan["filters"].get("cargo"))):
+                    (local_plan["operation"] == "list" and local_plan["filters"].get("cargo")) or
+                    (local_plan.get("show_career") and local_plan["operation"] != "unsupported")):
                 # Team assignments and officer lookups are deterministic, no API call.
                 result = evaluate(rows, local_plan, language=language)
             elif not secret("GROQ_API_KEY"):
@@ -373,7 +377,7 @@ with players_tab:
         selected_profession = st.selectbox(
             field_title(language, "Profissão (código)"), [""] + professions,
             key="member_career_type",
-            format_func=lambda v: t(language, "all") if not v else v,
+            format_func=lambda v: t(language, "all") if not v else career_label(v, language),
         )
     subset = [
         r for r in rows if (not query or norm(query) in norm(r["Jogador"]))
@@ -385,6 +389,7 @@ with players_tab:
     displayed_rows = []
     for row in subset:
         item = {name: row.get(name, "") for name in columns}
+        item["Profissão (código)"] = career_label(item["Profissão (código)"], language)
         level = str(item["Nível profissão"]).strip()
         item["Nível profissão"] = int(level) if level.isdecimal() else None
         displayed_rows.append(item)
