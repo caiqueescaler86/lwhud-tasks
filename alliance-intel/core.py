@@ -9,6 +9,8 @@ import unicodedata
 from datetime import datetime
 from typing import Any
 
+from i18n import field_title, t
+
 MAX_BYTES = 1024 * 1024
 MAX_ROWS = 2000
 MAX_QUESTION = 400
@@ -67,15 +69,15 @@ def timestamp(text: str) -> float:
     return 0.0
 
 
-def sanitize_csv(blob: bytes) -> tuple[list[dict[str, str]], dict[str, int]]:
+def sanitize_csv(blob: bytes, language: str = "pt") -> tuple[list[dict[str, str]], dict[str, int]]:
     if not isinstance(blob, bytes) or not blob or len(blob) > MAX_BYTES:
-        raise ValueError("CSV vazio ou maior que 1 MB.")
+        raise ValueError(t(language, "err_empty"))
     if b"\x00" in blob:
-        raise ValueError("Arquivo binário não é aceito. Envie apenas CSV.")
+        raise ValueError(t(language, "err_binary"))
     try:
         text = blob.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
-        raise ValueError("Salve o CSV como UTF-8.") from exc
+        raise ValueError(t(language, "err_utf8")) from exc
     head = text[:4096]
     try:
         dialect = csv.Sniffer().sniff(head, delimiters=",;\t")
@@ -85,19 +87,19 @@ def sanitize_csv(blob: bytes) -> tuple[list[dict[str, str]], dict[str, int]]:
     reader = csv.DictReader(io.StringIO(text), delimiter=delimiter, strict=True)
     headers = reader.fieldnames or []
     if not headers or len(headers) > 60:
-        raise ValueError("Cabeçalho CSV ausente ou grande demais.")
+        raise ValueError(t(language, "err_header"))
     mapped = [(h, ALIASES.get(norm(h))) for h in headers]
     uid_keys = [h for h in headers if norm(h) in PRIVATE_IDENTIFIERS]
     if "Jogador" not in {dest for _, dest in mapped}:
-        raise ValueError("CSV precisa ter a coluna Jogador.")
+        raise ValueError(t(language, "err_player"))
     unique: dict[tuple[str, ...], tuple[dict[str, str], float, int]] = {}
     total, dupes, skipped = 0, 0, 0
     for raw in reader:
         total += 1
         if total > MAX_ROWS:
-            raise ValueError("O arquivo tem mais de 2.000 registros; exporte apenas a aliança desejada.")
+            raise ValueError(t(language, "err_rows"))
         if None in raw or any(value is None for value in raw.values()):
-            raise ValueError("CSV tem campos desalinhados.")
+            raise ValueError(t(language, "err_alignment"))
         out = {field: "" for field in FIELDS}
         for source, destination in mapped:
             if destination:
@@ -120,7 +122,7 @@ def sanitize_csv(blob: bytes) -> tuple[list[dict[str, str]], dict[str, int]]:
         else:
             unique[key] = candidate
     if not unique:
-        raise ValueError("Nenhum jogador válido encontrado no arquivo.")
+        raise ValueError(t(language, "err_no_valid"))
     records = [item[0] for item in unique.values()]
     records.sort(key=lambda r: (r.get("Tag", ""), -float(number(r.get("Total Power")) or 0), r["Jogador"].casefold()))
     return records, {"linhas": total, "jogadores": len(records), "duplicados": dupes,
@@ -147,18 +149,19 @@ def number(value: Any) -> float | None:
         return None
 
 
-def format_value(value: float | int | None, metric: str) -> str:
+def format_value(value: float | int | None, metric: str, language: str = "pt") -> str:
     if value is None:
-        return "não disponível"
+        return t(language, "not_available")
+    sep = "," if language in ("en", "zh") else "."
     if metric in {"hq", "rank_kills", "rank_hero", "rank_phase", "rank_arena", "sovereign_phase", "arena_score"}:
-        return f"{value:,.0f}".replace(",", ".")
+        return f"{value:,.0f}".replace(",", sep)
     if abs(value) >= 1_000_000_000:
         return f"{value / 1_000_000_000:.2f}B"
     if abs(value) >= 1_000_000:
         return f"{value / 1_000_000:.1f}M"
     if abs(value) >= 1_000:
         return f"{value / 1_000:.1f}K"
-    return f"{value:,.0f}".replace(",", ".")
+    return f"{value:,.0f}".replace(",", sep)
 
 
 def allowed_plan(raw: Any) -> dict[str, Any]:
@@ -205,91 +208,123 @@ def apply_filters(rows: list[dict], filters: dict) -> list[dict]:
     return result
 
 
-def evaluate(rows: list[dict], raw_plan: Any) -> str:
+def evaluate(rows: list[dict], raw_plan: Any, language: str = "pt") -> str:
+    """Evaluate allowlisted, deterministic queries and format in the chosen UI language."""
     p = allowed_plan(raw_plan)
     selected = apply_filters(rows, p["filters"])
     op, metric, group, limit = p["operation"], p["metric"], p["group_by"], p["limit"]
     if op == "unsupported":
-        return "Consigo responder perguntas factuais sobre poder, kills, HQ, heróis, fases, arena, cargos e rankings. Reformule a pergunta usando esses dados."
+        return t(language, "unsupported")
     if not selected:
-        return "Nenhum jogador corresponde aos filtros nesta cópia do CSV. Não há dados para responder."
+        return t(language, "no_results")
     if op == "count":
-        return f"{len(selected)} jogadores encontrados (de {len(rows)} no snapshot)."
+        return t(language, "count_result", count=len(selected), total=len(rows))
     if op == "list":
-        return f"{len(selected)} jogadores encontrados:\n" + "\n".join("- " + r["Jogador"] for r in selected[:limit]) + (f"\n(Mostrando {limit})" if len(selected) > limit else "")
+        lines = [t(language, "list_header", count=len(selected))]
+        lines.extend("- " + r["Jogador"] for r in selected[:limit])
+        if len(selected) > limit:
+            lines.append(t(language, "showing", limit=limit))
+        return "\n".join(lines)
     if op == "summary":
-        lines = [f"Snapshot: {len(selected)} jogadores ({len(rows)} no total)."]
+        lines = [t(language, "summary_header", count=len(selected), total=len(rows))]
         for key in ("total_power", "kills", "troop_power"):
             numbers = [number(row[METRICS[key]]) for row in selected]
             known = [n for n in numbers if n is not None]
             if known:
-                lines.append(f"{METRICS[key]}: média {format_value(sum(known)/len(known), key)}; dados disponíveis em {len(known)}/{len(selected)} jogadores.")
+                lines.append(t(
+                    language, "summary_stat", metric=field_title(language, METRICS[key]),
+                    value=format_value(sum(known)/len(known), key, language),
+                    available=len(known), count=len(selected),
+                ))
         from collections import Counter
         ranks = Counter(r["Cargo"] for r in selected if r["Cargo"])
-        lines.append("Cargos observados: " + (", ".join(f"{r}: {n}" for r, n in sorted(ranks.items())) or "não informado"))
-        return "\n".join(lines) + "\nValores ausentes não são considerados zero."
+        roles = ", ".join(f"{r}: {n}" for r, n in sorted(ranks.items())) or t(language, "not_reported")
+        lines.append(t(language, "summary_roles", roles=roles))
+        lines.append(t(language, "missing_not_zero"))
+        return "\n".join(lines)
     if op == "group":
         from collections import defaultdict
         buckets = defaultdict(list)
         for row in selected:
-            buckets[row.get(GROUPS[group]) or "não informado"].append(row)
+            buckets[row.get(GROUPS[group]) or t(language, "not_reported")].append(row)
         lines = []
         for name, subset in sorted(buckets.items(), key=lambda kv: (-len(kv[1]), str(kv[0]))):
             values = [number(r[METRICS[metric]]) for r in subset]
             actual = [v for v in values if v is not None]
-            avg = format_value(sum(actual)/len(actual), metric) if actual else "não disponível"
-            lines.append(f"- {name}: {len(subset)} jogadores, média de {METRICS[metric]} {avg} ({len(actual)} com dados)")
+            avg = format_value(sum(actual)/len(actual), metric, language) if actual else t(language, "not_available")
+            lines.append(t(
+                language, "group_row", name=name, count=len(subset),
+                metric=field_title(language, METRICS[metric]), average=avg,
+                available=len(actual),
+            ))
         return "\n".join(lines[:20])
     measured = [(r, number(r[METRICS[metric]])) for r in selected]
     valid = [(r, n) for r, n in measured if n is not None]
     if not valid:
-        return f"Não há valores preenchidos de {METRICS[metric]} entre os {len(selected)} jogadores filtrados."
+        return t(language, "missing_metric", metric=field_title(language, METRICS[metric]), count=len(selected))
     if op in ("sum", "average"):
-        v = sum(n for _, n in valid)
-        if op == "average":
-            v = v / len(valid)
-        return f"{METRICS[metric]} — {'média' if op == 'average' else 'soma'}: {format_value(v,metric)}. Base: {len(valid)} de {len(selected)} jogadores com valor disponível."
+        total = sum(n for _, n in valid)
+        value = total/len(valid) if op == "average" else total
+        return t(
+            language, "aggregate", metric=field_title(language, METRICS[metric]),
+            operation=t(language, "average" if op == "average" else "sum"),
+            value=format_value(value, metric, language), available=len(valid),
+            count=len(selected),
+        )
     if op in ("top", "bottom"):
-        order = op == "top"
-        # Rank: 1 is best; for rank fields reverse numeric ordering.
+        descending = op == "top"
+        # A lower number is better for ranking metrics.
         if metric.startswith("rank_"):
-            order = not order
-        valid.sort(key=lambda item: item[1], reverse=order)
-        result = [f"{METRICS[metric]} — {'maiores/melhores' if op == 'top' else 'menores/piores'} (dados disponíveis: {len(valid)}/{len(selected)}):"]
+            descending = not descending
+        valid.sort(key=lambda item: item[1], reverse=descending)
+        result = [t(
+            language, "rank_header", metric=field_title(language, METRICS[metric]),
+            direction=t(language, "top" if op == "top" else "bottom"),
+            available=len(valid), count=len(selected),
+        )]
         for index, (row, val) in enumerate(valid[:limit], 1):
-            result.append(f"{index}. {row['Jogador']} ({row.get('Cargo') or 'cargo não informado'}) — {format_value(val, metric)}")
+            result.append(t(
+                language, "rank_item", index=index, player=row["Jogador"],
+                role=row.get("Cargo") or t(language, "role_unknown"),
+                value=format_value(val, metric, language),
+            ))
         if len(valid) < len(selected):
-            result.append("Jogadores sem métrica preenchida ficaram fora desta classificação.")
+            result.append(t(language, "rank_missing_note"))
         return "\n".join(result)
-    return "Não há uma operação segura para essa pergunta."
+    return t(language, "unknown_operation")
 
 
 def local_fallback_plan(question: str) -> dict:
-    """Small no-API fallback: we do not claim to understand open-ended questions."""
+    """Conservative no-API fallback for Portuguese, English, Chinese and Turkish."""
     q = norm(question)
     metric = "total_power"
-    if "kill" in q or "abate" in q:
+    if any(w in q for w in ("kill", "abate", "击杀", "击败", "oldur")):
         metric = "kills"
-    elif "tropa" in q:
+    elif any(w in q for w in ("tropa", "troop", "birlik", "部队")):
         metric = "troop_power"
-    elif "arena" in q:
+    elif any(w in q for w in ("arena", "竞技场")):
         metric = "arena_score"
-    elif "heroi" in q:
+    elif any(w in q for w in ("heroi", "hero", "kahraman", "英雄")):
         metric = "hero_power"
-    elif "soberano" in q or "fase" in q:
+    elif any(w in q for w in ("soberano", "fase", "phase", "asama", "阶段")):
         metric = "sovereign_phase"
-    elif "hq" in q or "cidade" in q or "nivel" in q:
+    elif any(w in q for w in ("hq", "cidade", "nivel", "level", "karargah", "主城")):
         metric = "hq"
     op = "unsupported"
-    if any(word in q for word in ("mais", "maiores", "maior", "top", "fortes", "ranking", "lider")):
+    if any(w in q for w in ("mais", "maiores", "maior", "top", "fortes", "ranking", "lider",
+                            "highest", "strongest", "most", "best", "top", "enguclu", "enyuksek",
+                            "enfazla", "siralama", "最多", "最高", "最强", "排名", "前十", "前五")):
         op = "top"
-    elif any(word in q for word in ("menos", "menores", "pior", "fracos")):
+    elif any(w in q for w in ("menos", "menores", "pior", "fracos", "lowest", "weakest",
+                              "least", "endulus", "enaz", "最少", "最低", "最弱")):
         op = "bottom"
-    elif any(word in q for word in ("quantos", "quantas", "numero", "contagem")):
+    elif any(w in q for w in ("quantos", "quantas", "numero", "contagem", "howmany",
+                              "count", "kac", "sayisi", "多少", "几个", "人数")):
         op = "count"
-    elif any(word in q for word in ("media", "medio")):
+    elif any(w in q for w in ("media", "medio", "average", "mean", "ortalama", "平均")):
         op = "average"
-    elif any(word in q for word in ("resumo", "visao", "situacao", "geral")):
+    elif any(w in q for w in ("resumo", "visao", "situacao", "geral", "summary",
+                              "overview", "ozet", "genel", "概览", "总结", "汇总")):
         op = "summary"
     match = re.search(r"\br([1-5])\b", question.lower())
     filters = {"cargo": "R" + match.group(1)} if match else {}

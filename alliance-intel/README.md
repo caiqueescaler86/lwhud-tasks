@@ -24,3 +24,12 @@ GROQ_API_KEY = "SUA-CHAVE-DO-GROQ"
 - O Groq recebe a pergunta, mas nao recebe dados de jogadores: interpreta uma consulta predefinida e o Python calcula as respostas. Nao executa scripts/SQL de nenhum tipo.
 - Ha limites de tamanho do upload e consultas para reduzir abuso. Sem protecao absoluta contra ataques ou abusos de cota.
 - Nao e necessario criar GitHub Actions ou modificar o site de tarefas.
+
+## Idiomas / Languages
+
+O site suporta Português, English, 简体中文 (chinês simplificado) e Türkçe.
+O seletor 🌐 aparece na barra lateral, inclusive na tela de login.
+Os nomes dos jogadores e os dados do CSV permanecem originais; menus,
+colunas e respostas calculadas são apresentados no idioma selecionado.
+Groq aceita perguntas nos quatro idiomas, mas nunca recebe registros ou UIDs.
+Não é preciso adicionar novos Secrets nem habilitar GitHub Actions.
