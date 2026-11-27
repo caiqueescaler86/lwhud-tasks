@@ -1,6 +1,6 @@
 import json
 import unittest
-from ds_web import DSReader, intelligence, csv_bytes
+from ds_web import DSReader, DSDatabaseReader, intelligence, csv_bytes
 
 class Response:
     def __init__(self,value):self.value=value
@@ -27,5 +27,32 @@ class DSWebTests(unittest.TestCase):
         row={'match':{'starters':[{'hero_power':100}]},'enemy':{'status':'worst','top':[{'hero_power':120}]}}
         self.assertEqual(intelligence(row)['threats'],[{'hero_power':120}])
         self.assertEqual(intelligence({'match':{'starters':[]}})['status'],'generic')
+
+    def test_database_reader_scope_cache(self):
+        calls=[]
+        class Cursor:
+            def __enter__(self):return self
+            def __exit__(self,*args):pass
+            def execute(self,sql):calls.append(sql)
+            def fetchall(self):return [({'match':{'starters':[]}},)]
+        class Connection:
+            def __enter__(self):return self
+            def __exit__(self,*args):pass
+            def cursor(self):return Cursor()
+        def connect(dsn,**kw):
+            self.assertEqual(kw['sslmode'],'verify-full')
+            self.assertEqual(kw['connect_timeout'],8)
+            return Connection()
+        r=DSDatabaseReader('postgresql://lw_ds_streamlit_reader.test:fake@aws-0-us-east-1.pooler.supabase.com:5432/postgres',connector=connect)
+        a=r.read();a[0]['match']['starters'].append('changed')
+        self.assertEqual(r.read(),[{'match':{'starters':[]}}])
+        self.assertEqual(len(calls),2)
+        self.assertIn('lw_ds_private.matches',calls[1])
+        self.assertIn('LIMIT 8',calls[1])
+    def test_database_reader_reject_admin_and_untrusted_host(self):
+        for dsn in ('postgresql://postgres.test:fake@aws-0-us-east-1.pooler.supabase.com:5432/postgres',
+                    'postgresql://lw_ds_streamlit_reader.test:fake@evil.com:5432/postgres',
+                    'postgresql://lw_ds_streamlit_reader.test:fake@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=disable'):
+            with self.assertRaises(ValueError):DSDatabaseReader(dsn)
 
 if __name__=='__main__':unittest.main()

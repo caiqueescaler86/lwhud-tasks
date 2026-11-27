@@ -60,6 +60,53 @@ class DSReader:
 def reader(url,key,email,password):return DSReader(url,key,email,password)
 
 
+class DSDatabaseReader:
+    """Dedicated PostgreSQL login; queries only the RLS-protected DS match table."""
+    def __init__(self, dsn, connector=None):
+        u=urlparse(dsn)
+        if (u.scheme not in ('postgresql','postgres') or not u.hostname
+                or not re.fullmatch(r'[a-z0-9-]+\.pooler\.supabase\.com',u.hostname)
+                or not re.fullmatch(r'lw_ds_streamlit_reader\.[a-z0-9]+',u.username or '')
+                or not u.password or u.port != 5432 or u.path != '/postgres'
+                or u.query or u.fragment):
+            raise ValueError('Use the Supabase session pooler DS reader URI without query parameters')
+        self.dsn=dsn;self.connector=connector
+        self.lock=threading.RLock();self.cached=None;self.cache_until=0
+
+    def read(self):
+        with self.lock:
+            if self.cached is not None and time.monotonic()<self.cache_until:
+                return copy.deepcopy(self.cached)
+            connector=self.connector
+            if connector is None:
+                import psycopg
+                connector=psycopg.connect
+            import certifi
+            with connector(self.dsn, sslmode='verify-full',sslrootcert=certifi.where(),
+                           connect_timeout=8,autocommit=True,prepare_threshold=None) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SET statement_timeout = '8s'")
+                    cur.execute("""
+                        SELECT jsonb_build_object(
+                            'match',match_payload,'enemy',enemy_payload,
+                            'enemy_seen',enemy_seen,'updated_at',updated_at,'ends_at',ends_at
+                        )
+                        FROM lw_ds_private.matches
+                        WHERE ends_at > lw_ds_private.cutoff(now())
+                        ORDER BY start_ms,group_id LIMIT 8
+                    """)
+                    rows=[r[0] for r in cur.fetchall()]
+            if (len(rows)>8 or any(not isinstance(r,dict) or not isinstance(r.get('match'),dict) for r in rows)
+                    or len(json.dumps(rows,ensure_ascii=False).encode())>524288):
+                raise ValueError('Invalid DS response')
+            self.cached=copy.deepcopy(rows);self.cache_until=time.monotonic()+60
+            return rows
+
+
+@lru_cache(maxsize=2)
+def database_reader(dsn):return DSDatabaseReader(dsn)
+
+
 def intelligence(row):
     intel=copy.deepcopy(row.get('enemy') or {})
     if intel.get('status') not in ('partial','worst'):return dict(status='generic',top=[],threats=[],known=0,expected=None)
@@ -97,8 +144,12 @@ def show_ds_intel(language,secret):
             if str(k).startswith('ds_'):del st.session_state[k]
         st.rerun()
     try:
-        cfg=[secret(k) for k in ('DS_SUPABASE_URL','DS_SUPABASE_PUBLISHABLE_KEY','DS_READ_EMAIL','DS_READ_PASSWORD')]
-        rows=reader(*cfg).read()
+        dsn=secret('DS_DATABASE_URL')
+        if dsn:
+            rows=database_reader(dsn).read()
+        else:
+            cfg=[secret(k) for k in ('DS_SUPABASE_URL','DS_SUPABASE_PUBLISHABLE_KEY','DS_READ_EMAIL','DS_READ_PASSWORD')]
+            rows=reader(*cfg).read()
     except Exception:
         st.warning('DS data is not available. Check Supabase setup, reader access and Streamlit secrets.');return
     st.caption('Weekly snapshots · refresh cache: 60 seconds · no Groq')

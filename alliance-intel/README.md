@@ -54,7 +54,13 @@ Nao ha como confirmar a autorizacao sem a chave configurada no proprio Streamlit
 
 ## DS Intel (optional)
 
-The portal now has a DS Intel section after login, even without an Alliance CSV upload. Existing CSV and Groq features are unchanged. DS reads only the scoped Supabase RPC `lw_ds_read`, via a dedicated read-only Auth user. Configure private Streamlit Secrets:
+The portal now has a DS Intel section after login, even without an Alliance CSV upload. Existing CSV and Groq features are unchanged. DS uses a dedicated, read-only PostgreSQL login through the Supabase Session pooler. No Authentication user is required. First execute the existing LWHUD `ds_intel_cloud_setup.sql`, then `ds_reader_setup.sql` in this directory; it returns a randomly generated reader password. In Supabase Connect > Session pooler, copy the exact host and use the generated reader username/password in the single private Streamlit secret:
+
+```toml
+DS_DATABASE_URL = "postgresql://lw_ds_streamlit_reader.PROJECT_REF:GENERATED_PASSWORD@POOLER_HOST:5432/postgres"
+```
+
+The reader is restricted by RLS to NWG server 1512, current matches, and explicit column grants. The SQL script must be adapted deliberately for a different alliance. Existing installations may optionally keep the former Auth RPC reader configuration instead, without setting DS_DATABASE_URL:
 
 ```toml
 DS_SUPABASE_URL = "https://PROJECT.supabase.co"
@@ -63,6 +69,6 @@ DS_READ_EMAIL = "reader@example.com"
 DS_READ_PASSWORD = "separate-reader-password"
 ```
 
-Never commit actual credentials. DS Intel uses the existing ACCESS_PASSWORD portal login; visitors do not need Supabase accounts or a second access code. The dedicated reader credentials stay in server-side Streamlit Secrets. Do not use a service-role key. Execute the LWHUD database setup and explicit reader/collector grants first. DS rosters and rival hypotheses are captured by the HUD, cached for 60 seconds, and removed weekly in the database. Draft plans are session-local, not official/shared. PNG in EN/PT/TR/ZH and CSV are generated deterministically, without Groq. Web CSV player IDs are match-specific pseudonyms. The map is an original schematic based on the classic arrangement, not an exact game screenshot. The CJK fonts are installed via packages.txt; for local testing install fonts-noto-cjk, fonts-noto-core, fonts-dejavu-core on Linux or Microsoft YaHei on Windows.
+Never commit actual credentials. DS Intel uses the existing ACCESS_PASSWORD portal login; visitors do not need Supabase accounts or a second access code. The dedicated reader credentials stay in server-side Streamlit Secrets. Do not use a service-role key. Execute the LWHUD database setup and authorize the actual desktop collector separately. Do not grant DS publication to an unverified installation. For the database login route, the new reader SQL replaces the reader portion of the former Auth grant script. DS rosters and rival hypotheses are captured by the HUD, cached for 60 seconds, and removed weekly in the database. Draft plans are session-local, not official/shared. PNG in EN/PT/TR/ZH and CSV are generated deterministically, without Groq. Web CSV player IDs are match-specific pseudonyms. The map is an original schematic based on the classic arrangement, not an exact game screenshot. The CJK fonts are installed via packages.txt; for local testing install fonts-noto-cjk, fonts-noto-core, fonts-dejavu-core on Linux or Microsoft YaHei on Windows.
 
 Desktop/web planner source is identical; copy ds_intel.py and ds_intel_render.py from LWHUD when updating either. No live Supabase integration test is possible until the owner executes setup and configures the reader.
