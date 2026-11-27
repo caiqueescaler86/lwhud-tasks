@@ -57,13 +57,12 @@ Nao ha como confirmar a autorizacao sem a chave configurada no proprio Streamlit
 The portal now has a DS Intel section after login, even without an Alliance CSV upload. Existing CSV and Groq features are unchanged. DS reads only the scoped Supabase RPC `lw_ds_read`, via a dedicated read-only Auth user. Configure private Streamlit Secrets:
 
 ```toml
-DS_ACCESS_PASSWORD = "separate-long-access-code"
 DS_SUPABASE_URL = "https://PROJECT.supabase.co"
 DS_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_..."
 DS_READ_EMAIL = "reader@example.com"
 DS_READ_PASSWORD = "separate-reader-password"
 ```
 
-Never commit actual credentials. DS access password must differ from ACCESS_PASSWORD and ADMIN_PASSWORD, and be at least 12 characters. Do not use a service-role key. Execute the LWHUD database setup and explicit reader/collector grants first. DS rosters and rival hypotheses are captured by the HUD, cached for 60 seconds, and removed weekly in the database. Draft plans are session-local, not official/shared. PNG in EN/PT/TR/ZH and CSV are generated deterministically, without Groq. Web CSV player IDs are match-specific pseudonyms. The map is an original schematic based on the classic arrangement, not an exact game screenshot. The CJK fonts are installed via packages.txt; for local testing install fonts-noto-cjk, fonts-noto-core, fonts-dejavu-core on Linux or Microsoft YaHei on Windows.
+Never commit actual credentials. DS Intel uses the existing ACCESS_PASSWORD portal login; visitors do not need Supabase accounts or a second access code. The dedicated reader credentials stay in server-side Streamlit Secrets. Do not use a service-role key. Execute the LWHUD database setup and explicit reader/collector grants first. DS rosters and rival hypotheses are captured by the HUD, cached for 60 seconds, and removed weekly in the database. Draft plans are session-local, not official/shared. PNG in EN/PT/TR/ZH and CSV are generated deterministically, without Groq. Web CSV player IDs are match-specific pseudonyms. The map is an original schematic based on the classic arrangement, not an exact game screenshot. The CJK fonts are installed via packages.txt; for local testing install fonts-noto-cjk, fonts-noto-core, fonts-dejavu-core on Linux or Microsoft YaHei on Windows.
 
 Desktop/web planner source is identical; copy ds_intel.py and ds_intel_render.py from LWHUD when updating either. No live Supabase integration test is possible until the owner executes setup and configures the reader.

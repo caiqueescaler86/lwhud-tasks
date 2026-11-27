@@ -81,21 +81,20 @@ def show_ds_intel(language,secret):
     import streamlit as st
     lang=language if language in TEXT else 'en';t=TEXT[lang]
     st.title('DS Intel')
-    code=secret('DS_ACCESS_PASSWORD')
-    if len(code)<12 or any(hmac.compare_digest(code,secret(k)) for k in ('ACCESS_PASSWORD','ADMIN_PASSWORD')):
-        st.info('DS Intel is not configured. Administrator: set a separate DS_ACCESS_PASSWORD (12+ characters).');return
-    digest=hashlib.sha256(code.encode()).hexdigest()
-    if st.session_state.get('ds_access')!=digest:
-        if st.session_state.get('ds_failures',0)>=5:st.error('Too many attempts in this session.');return
-        with st.form('ds_login',clear_on_submit=True):
-            attempt=st.text_input('DS access code',type='password',max_chars=256);submitted=st.form_submit_button('Open DS Intel')
-        if submitted:
-            if hmac.compare_digest(attempt,code):st.session_state.ds_access=digest;st.session_state.ds_failures=0;st.rerun()
-            st.session_state.ds_failures=st.session_state.get('ds_failures',0)+1;st.error('Invalid DS access code.')
-        return
-    if st.button('Close DS session'):
+    # Reuse the existing portal gate, including password rotation invalidation.
+    # Check again defensively before constructing the server-side reader.
+    password=secret('ACCESS_PASSWORD')
+    digest=hashlib.sha256(password.encode('utf-8')).hexdigest()
+    if (len(password)<12 or not st.session_state.get('access_granted')
+            or not hmac.compare_digest(str(st.session_state.get('access_fingerprint','')),digest)):
+        st.info('Sign in to the Alliance Intel portal first.');return
+    if st.button('Sign out',key='ds_portal_logout'):
+        st.session_state.access_granted=False
+        st.session_state.access_fingerprint=''
+        st.session_state.history=[]
+        st.session_state.clear_admin_on_login=True
         for k in list(st.session_state):
-            if str(k).startswith('ds_') and k!='ds_failures':del st.session_state[k]
+            if str(k).startswith('ds_'):del st.session_state[k]
         st.rerun()
     try:
         cfg=[secret(k) for k in ('DS_SUPABASE_URL','DS_SUPABASE_PUBLISHABLE_KEY','DS_READ_EMAIL','DS_READ_PASSWORD')]
