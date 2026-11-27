@@ -107,6 +107,42 @@ class DSDatabaseReader:
 def database_reader(dsn):return DSDatabaseReader(dsn)
 
 
+def safe_reader_error(exc, configured):
+    # Never return an exception message, DSN, connection host or credentials.
+    if not configured:
+        return "DS-CONFIG-MISSING: configure DS_DATABASE_URL in Streamlit Secrets."
+    if isinstance(exc, ImportError):
+        return "DS-DRIVER: PostgreSQL driver unavailable; check deployment dependencies."
+    if isinstance(exc, HTTPError):
+        if exc.code in (401, 403):
+            return "DS-AUTH: API authentication or authorization failed."
+        return "DS-HTTP: reader API returned an error."
+    state = str(getattr(exc, "sqlstate", "") or "")
+    message = str(exc).lower()
+    if state in ("28P01", "28000") or any(x in message for x in (
+            "password authentication failed", "authentication failed",
+            "tenant or user not found", "invalid password", "role does not exist",
+            "user not found", "wrong password")):
+        return "DS-AUTH: database reader login rejected. Check the reader password and role."
+    if state == "42501" or "permission denied" in message:
+        return "DS-PERMISSION: reader lacks access to the DS schema or table."
+    if state in ("42P01", "3F000", "42883", "42703"):
+        return "DS-SCHEMA: expected DS tables, columns or functions are missing."
+    if any(x in message for x in ("certificate verify", "certificate validation",
+                                  "certificate", "ssl error", "tls error")):
+        return "DS-TLS: certificate verification failed; secure connection not established."
+    if state.startswith("08") or any(x in message for x in (
+            "timeout", "timed out", "connection refused", "could not translate host",
+            "could not connect", "network is unreachable", "connection failed",
+            "server closed the connection")):
+        return "DS-NETWORK: could not establish a connection to the database."
+    if state == "57014":
+        return "DS-TIMEOUT: database query exceeded its time limit."
+    if isinstance(exc, ValueError):
+        return "DS-CONFIG-OR-RESPONSE: check the reader URI and database response format."
+    return "DS-UNKNOWN: reader failed; check administrator diagnostics."
+
+
 def intelligence(row):
     intel=copy.deepcopy(row.get('enemy') or {})
     if intel.get('status') not in ('partial','worst'):return dict(status='generic',top=[],threats=[],known=0,expected=None)
@@ -143,15 +179,22 @@ def show_ds_intel(language,secret):
         for k in list(st.session_state):
             if str(k).startswith('ds_'):del st.session_state[k]
         st.rerun()
+    configured=False
     try:
         dsn=secret('DS_DATABASE_URL')
         if dsn:
+            configured=True
             rows=database_reader(dsn).read()
         else:
             cfg=[secret(k) for k in ('DS_SUPABASE_URL','DS_SUPABASE_PUBLISHABLE_KEY','DS_READ_EMAIL','DS_READ_PASSWORD')]
+            configured=all(cfg)
+            if not configured:raise ValueError("Missing reader configuration")
             rows=reader(*cfg).read()
-    except Exception:
-        st.warning('DS data is not available. Check Supabase setup, reader access and Streamlit secrets.');return
+    except Exception as exc:
+        st.warning(safe_reader_error(exc,configured))
+        if st.button("Retry DS connection",key="ds_retry_connection"):
+            st.rerun()
+        return
     st.caption('Weekly snapshots · refresh cache: 60 seconds · no Groq')
     if not rows:st.info('No Desert Storm matches published for this week. Open the DS screens in the HUD.');return
     def label(i):

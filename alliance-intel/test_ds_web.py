@@ -1,6 +1,6 @@
 import json
 import unittest
-from ds_web import DSReader, DSDatabaseReader, intelligence, csv_bytes
+from ds_web import DSReader, DSDatabaseReader, intelligence, csv_bytes, safe_reader_error
 
 class Response:
     def __init__(self,value):self.value=value
@@ -54,5 +54,23 @@ class DSWebTests(unittest.TestCase):
                     'postgresql://lw_ds_streamlit_reader.test:fake@evil.com:5432/postgres',
                     'postgresql://lw_ds_streamlit_reader.test:fake@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=disable'):
             with self.assertRaises(ValueError):DSDatabaseReader(dsn)
+
+    def test_safe_reader_errors_do_not_leak_credentials(self):
+        class DatabaseError(Exception):
+            sqlstate="42501"
+        examples=[
+            (ValueError("secret"),False,"DS-CONFIG-MISSING"),
+            (ImportError("secret"),True,"DS-DRIVER"),
+            (RuntimeError("password authentication failed: secret"),True,"DS-AUTH"),
+            (DatabaseError("secret"),True,"DS-PERMISSION"),
+            (RuntimeError("certificate verify failed: secret"),True,"DS-TLS"),
+            (RuntimeError("connection refused: secret"),True,"DS-NETWORK"),
+            (ValueError("secret"),True,"DS-CONFIG-OR-RESPONSE"),
+        ]
+        for exc,configured,prefix in examples:
+            result=safe_reader_error(exc,configured)
+            self.assertTrue(result.startswith(prefix))
+            self.assertNotIn("secret",result.lower())
+
 
 if __name__=='__main__':unittest.main()
