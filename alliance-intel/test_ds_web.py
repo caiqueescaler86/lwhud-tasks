@@ -59,18 +59,18 @@ class DSWebTests(unittest.TestCase):
         class DatabaseError(Exception):
             sqlstate="42501"
         examples=[
-            (ValueError("secret"),False,"DS-CONFIG-MISSING"),
-            (ImportError("secret"),True,"DS-DRIVER"),
-            (RuntimeError("password authentication failed: secret"),True,"DS-AUTH"),
-            (DatabaseError("secret"),True,"DS-PERMISSION"),
-            (RuntimeError("certificate verify failed: secret"),True,"DS-TLS"),
-            (RuntimeError("connection refused: secret"),True,"DS-NETWORK"),
-            (ValueError("secret"),True,"DS-CONFIG-OR-RESPONSE"),
+            (ValueError("credential-sentinel-8927"),False,"DS-CONFIG-MISSING"),
+            (ImportError("credential-sentinel-8927"),True,"DS-DRIVER"),
+            (RuntimeError("password authentication failed: credential-sentinel-8927"),True,"DS-AUTH"),
+            (DatabaseError("credential-sentinel-8927"),True,"DS-PERMISSION"),
+            (RuntimeError("certificate verify failed: credential-sentinel-8927"),True,"DS-TLS"),
+            (RuntimeError("connection refused: credential-sentinel-8927"),True,"DS-NETWORK"),
+            (ValueError("credential-sentinel-8927"),True,"DS-CONFIG-OR-RESPONSE"),
         ]
         for exc,configured,prefix in examples:
             result=safe_reader_error(exc,configured)
             self.assertTrue(result.startswith(prefix))
-            self.assertNotIn("secret",result.lower())
+            self.assertNotIn("credential-sentinel-8927",result.lower())
 
 
 if __name__=='__main__':unittest.main()
