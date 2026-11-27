@@ -1,4 +1,4 @@
-"""Minimal temporary Alliance Intel portal. No Supabase, UID output, or code execution."""
+"""Alliance Intel and scoped read-only DS Intel portal."""
 from __future__ import annotations
 
 import hashlib
@@ -18,6 +18,7 @@ from core import (
     MAX_QUESTION, UID_PATTERN, career_label, evaluate, local_fallback_plan, norm, sanitize_csv,
 )
 from i18n import LANGUAGES, field_title, t
+from ds_web import show_ds_intel
 
 st.set_page_config(
     page_title="Alliance Intel", page_icon="🛡️",
@@ -242,6 +243,10 @@ if st.session_state.get("previous_language") not in (None, language):
 st.session_state.previous_language = language
 
 require_access_code(language)
+section = st.radio("Module", ["Alliance Intel", "DS Intel"], horizontal=True, key="portal_module")
+if section == "DS Intel":
+    show_ds_intel(language, secret)
+    st.stop()
 shared = store()
 
 with admin_column:
@@ -288,6 +293,9 @@ with admin_column:
             st.session_state.access_fingerprint = ""
             st.session_state.history = []
             st.session_state.clear_admin_on_login = True
+            for key in list(st.session_state):
+                if str(key).startswith("ds_"):
+                    del st.session_state[key]
             st.rerun()
 
 rows, meta = shared.snapshot()
