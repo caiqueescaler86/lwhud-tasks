@@ -1,7 +1,7 @@
 """Classic battlefield schematic with named assignments; not an in-game screenshot."""
 from functools import lru_cache
-from pathlib import Path
 from ds_intel import BUILDINGS, TEXT, validate_plan
+from ds_fonts import resolve_fonts
 
 # Relative arrangement from https://www.lastwartutorial.com/desert-storm/.
 # Label positions are deliberately spaced; the illustration is not to scale.
@@ -15,20 +15,7 @@ def render_png(path, match, plan, lang='en'):
     from PIL import Image, ImageDraw, ImageFont
     validate_plan(plan, match)
     t = TEXT[lang]
-    candidates = [
-        'C:/Windows/Fonts/msyh.ttc', 'C:/Windows/Fonts/simsun.ttc',
-        '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
-        'C:/Windows/Fonts/arial.ttf', 'C:/Windows/Fonts/seguisym.ttf',
-        'C:/Windows/Fonts/himalaya.ttf', 'C:/Windows/Fonts/cambria.ttc',
-        '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
-        '/usr/share/fonts/truetype/noto/NotoSerifTibetan-Regular.ttf',
-        '/usr/share/fonts/truetype/noto/NotoSansGeorgian-Regular.ttf',
-        '/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf',
-        '/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf',
-    ]
-    paths = [x for x in candidates if Path(x).is_file()]
-    if not any(x.endswith(('msyh.ttc','simsun.ttc','NotoSansCJK-Regular.ttc')) for x in paths):
-        raise RuntimeError('Install Microsoft YaHei or fonts-noto-cjk for multilingual PNG export.')
+    paths = resolve_fonts()
     @lru_cache(maxsize=256)
     def font(p, size):
         return ImageFont.truetype(p,size)

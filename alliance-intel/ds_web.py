@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from ds_intel import BUILDINGS, TEXT, plan, validate_plan, export_csv
 from ds_intel_render import render_png
+from ds_fonts import FontUnavailable
 from ds_cache import SharedSnapshotCache, CacheUnavailable, MAX_BYTES
 from ds_web_i18n import ui, validation_label, diagnostic_label
 
@@ -308,6 +309,11 @@ def show_ds_intel(language,secret):
     if st.button(L('preview')):
         try:
             out=io.BytesIO();render_png(out,m,p,lang);st.session_state.ds_image=(image_key,out.getvalue())
-        except (OSError,RuntimeError,ValueError) as exc:st.error(L('png_error'))
+        except ImportError:
+            st.error('PNG-PIL: '+L('png_pil'))
+        except FontUnavailable:
+            st.error('PNG-FONT: '+L('png_font'))
+        except (OSError,RuntimeError,ValueError,TypeError,KeyError):
+            st.error('PNG-RENDER: '+L('png_error'))
     if st.session_state.get('ds_image',(None,))[0]==image_key:
         raw=st.session_state.ds_image[1];st.image(raw,use_container_width=True);st.download_button(L('png'),raw,file_name=f"DS_{m['team']}_{lang}.png",mime='image/png')

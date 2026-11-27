@@ -224,10 +224,10 @@ LABELS = {
     "预览／生成PNG"
   ],
   "png_error": [
-    "Não foi possível gerar o PNG. Verifique fontes e Pillow.",
-    "PNG rendering unavailable. Check fonts and Pillow.",
-    "PNG oluşturulamadı. Yazı tiplerini ve Pillow'u kontrol edin.",
-    "无法生成PNG，请检查字体和Pillow。"
+    "Não foi possível renderizar o plano. Informe o administrador.",
+    "The plan could not be rendered. Contact the administrator.",
+    "Plan oluşturulamadı. Yöneticiye başvurun.",
+    "无法渲染计划，请联系管理员。"
   ],
   "png": [
     "Exportar PNG",
@@ -396,6 +396,18 @@ LABELS = {
     "Reader unavailable; contact the administrator.",
     "Okuyucu kullanılamıyor; yöneticiye başvurun.",
     "读取服务不可用，请联系管理员。"
+  ],
+  "png_pil": [
+    "Pillow indisponível. O administrador deve verificar as dependências do site.",
+    "Pillow is unavailable. The administrator must check deployment dependencies.",
+    "Pillow kullanılamıyor. Yönetici dağıtım bağımlılıklarını kontrol etmelidir.",
+    "Pillow不可用，请管理员检查部署依赖。"
+  ],
+  "png_font": [
+    "Fonte multilíngue indisponível. Tente novamente após 5 minutos.",
+    "Multilingual font unavailable. Retry after 5 minutes.",
+    "Çok dilli yazı tipi kullanılamıyor. 5 dakika sonra tekrar deneyin.",
+    "多语言字体不可用，请5分钟后重试。"
   ]
 }
 
