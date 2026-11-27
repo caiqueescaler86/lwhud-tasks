@@ -404,10 +404,10 @@ LABELS = {
     "Pillow不可用，请管理员检查部署依赖。"
   ],
   "png_font": [
-    "Fonte multilíngue indisponível. Tente novamente após 5 minutos.",
-    "Multilingual font unavailable. Retry after 5 minutes.",
-    "Çok dilli yazı tipi kullanılamıyor. 5 dakika sonra tekrar deneyin.",
-    "多语言字体不可用，请5分钟后重试。"
+    "As fontes multilíngues não estão instaladas na hospedagem. O administrador deve verificar a instalação das dependências Linux.",
+    "Multilingual fonts are missing from the hosting environment. The administrator should check Linux dependency installation.",
+    "Sunucuda çok dilli yazı tipleri eksik. Yönetici Linux bağımlılıklarının kurulumunu kontrol etmelidir.",
+    "托管环境缺少多语言字体，请管理员检查Linux依赖安装。"
   ]
 }
 

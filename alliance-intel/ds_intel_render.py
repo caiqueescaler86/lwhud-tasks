@@ -1,7 +1,7 @@
 """Classic battlefield schematic with named assignments; not an in-game screenshot."""
 from functools import lru_cache
 from ds_intel import BUILDINGS, TEXT, validate_plan
-from ds_fonts import resolve_fonts
+from ds_fonts import resolve_fonts, load_font, glyph_exists
 
 # Relative arrangement from https://www.lastwartutorial.com/desert-storm/.
 # Label positions are deliberately spaced; the illustration is not to scale.
@@ -18,13 +18,13 @@ def render_png(path, match, plan, lang='en'):
     paths = resolve_fonts()
     @lru_cache(maxsize=256)
     def font(p, size):
-        return ImageFont.truetype(p,size)
+        return load_font(p,size)
     @lru_cache(maxsize=4096)
     def select(ch):
         if ch.isspace(): return paths[0]
         for p in paths:
             f=font(p,24)
-            if bytes(f.getmask(ch)) != bytes(f.getmask('\U0010ffff')):
+            if glyph_exists(f,ch):
                 return p
         return paths[0]
     def runs(s):
