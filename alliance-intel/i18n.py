@@ -461,3 +461,42 @@ VERIFIED_CAREER_NAMES = {
 for _lang, _names in VERIFIED_CAREER_NAMES.items():
     for _career_type, _career_name in _names.items():
         TEXT[_lang][f"career_{_career_type}"] = _career_name
+
+
+# Live alliance reader UI. No credentials, player UIDs or technical messages.
+ALLIANCE_AUTO_MESSAGES = {
+    "pt": {
+        "alliance_live_source": "NWG · Supabase · {count} jogadores · última captura {observed} · cache compartilhado de 30 min",
+        "alliance_live_identity_only": "Sem roster recente de al.rank. Lista baseada em perfis observados: pode incluir ex-membros. Faça uma captura nova no HUD para confirmar.",
+        "alliance_live_stale": "Falha na sincronização: exibindo a última consulta bem-sucedida, possivelmente desatualizada.",
+        "alliance_live_empty": "O Supabase não retornou jogadores NWG. Aguarde uma captura no HUD ou use CSV como alternativa.",
+        "alliance_live_setup": "Para sincronizar automaticamente, instale o SQL alliance_reader_setup.sql no Supabase e configure DS_DATABASE_URL nos Secrets. CSV continua opcional.",
+        "alliance_live_error": "Sincronização automática indisponível ({code}). Confirme o SQL/permissões no Supabase; CSV ainda funciona.",
+    },
+    "en": {
+        "alliance_live_source": "NWG · Supabase · {count} players · last capture {observed} · shared 30-minute cache",
+        "alliance_live_identity_only": "No recent al.rank roster. Showing observed profiles only; former members may be included. Capture a fresh roster in the HUD.",
+        "alliance_live_stale": "Sync failed: showing the last successfully fetched snapshot, which may be outdated.",
+        "alliance_live_empty": "No NWG players returned from Supabase. Capture a roster in the HUD or optionally upload CSV.",
+        "alliance_live_setup": "For automatic updates, install alliance_reader_setup.sql in Supabase and configure DS_DATABASE_URL in Secrets. CSV remains optional.",
+        "alliance_live_error": "Automatic update unavailable ({code}). Check Supabase SQL/permissions; CSV still works.",
+    },
+    "zh": {
+        "alliance_live_source": "NWG · Supabase · {count} 名玩家 · 最近采集 {observed} · 共享缓存 30 分钟",
+        "alliance_live_identity_only": "没有近期的 al.rank 名单。当前显示历史玩家资料，可能包含已退盟成员；请在 HUD 重新采集。",
+        "alliance_live_stale": "同步失败：当前显示上次成功读取的数据，可能已过期。",
+        "alliance_live_empty": "Supabase 未返回 NWG 玩家。请在 HUD 采集名单，或使用 CSV 备用。",
+        "alliance_live_setup": "自动同步需要在 Supabase 执行 alliance_reader_setup.sql，并在 Secrets 配置 DS_DATABASE_URL。CSV 仍可备用。",
+        "alliance_live_error": "自动更新不可用（{code}）。请检查 Supabase SQL 和权限；CSV 仍然可用。",
+    },
+    "tr": {
+        "alliance_live_source": "NWG · Supabase · {count} oyuncu · son kayıt {observed} · ortak 30 dakikalık önbellek",
+        "alliance_live_identity_only": "Güncel al.rank listesi yok. Önceki üyeler içerebilen gözlemlenmiş profiller gösteriliyor; HUD'da yeni kayıt alın.",
+        "alliance_live_stale": "Eşitleme başarısız: son başarılı veri gösteriliyor ve güncel olmayabilir.",
+        "alliance_live_empty": "Supabase NWG oyuncusu döndürmedi. HUD'da listeyi kaydedin veya CSV kullanın.",
+        "alliance_live_setup": "Otomatik yenileme için Supabase'de alliance_reader_setup.sql çalıştırın ve Secrets'a DS_DATABASE_URL ekleyin. CSV isteğe bağlıdır.",
+        "alliance_live_error": "Otomatik yenileme kullanılamıyor ({code}). Supabase SQL/izinlerini kontrol edin; CSV çalışmaya devam eder.",
+    },
+}
+for _language, _messages in ALLIANCE_AUTO_MESSAGES.items():
+    TEXT[_language].update(_messages)

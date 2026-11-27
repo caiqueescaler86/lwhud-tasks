@@ -20,6 +20,7 @@ from core import (
 from i18n import LANGUAGES, field_title, t
 from ds_web import show_ds_intel
 from ds_web_i18n import ui as ds_ui
+from alliance_live import AllianceReadError, normalize_members, reader as alliance_reader
 
 st.set_page_config(
     page_title="Alliance Intel", page_icon="🛡️",
@@ -303,6 +304,31 @@ rows, meta = shared.snapshot()
 if st.session_state.get("upload_notice"):
     count, duplicates = st.session_state.pop("upload_notice")
     st.success(t(language, "upload_success", players=count, duplicates=duplicates))
+
+# NWG members are loaded directly from the existing DS Supabase pooler login.
+# One shared 30-minute cache covers all visitors; CSV remains an admin fallback.
+live_dsn = secret("DS_DATABASE_URL")
+if live_dsn:
+    try:
+        live = alliance_reader(live_dsn)
+        live_snapshot = live.read()
+        live_rows = normalize_members(live_snapshot)
+        if live_rows:
+            rows = live_rows
+            observed = str(live_snapshot.get("snapshot_at") or "—")[:45]
+            st.caption(t(language, "alliance_live_source",
+                         count=len(rows), observed=observed))
+            if live.status == "stale":
+                st.warning(t(language, "alliance_live_stale"))
+            if live_snapshot["source"] == "identities":
+                st.warning(t(language, "alliance_live_identity_only"))
+        else:
+            st.warning(t(language, "alliance_live_empty"))
+    except AllianceReadError as exc:
+        # Only safe diagnostic codes: PostgreSQL messages can contain a DSN.
+        st.warning(t(language, "alliance_live_error", code=exc.code))
+else:
+    st.info(t(language, "alliance_live_setup"))
 
 if not rows:
     st.info(t(language, "csv_empty_short"))

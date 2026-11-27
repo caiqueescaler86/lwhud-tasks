@@ -1,12 +1,57 @@
 # Alliance Intel (temporario)
 
-Site Streamlit sem consulta a Supabase e sem acesso ao computador de ninguem.
+Site Streamlit com leitura restrita do Supabase para NWG e DS Intel, sem acesso ao computador de visitantes.
 
 ## Publicar / atualizar
 - App: `alliance-intel/streamlit_app.py` neste repositorio.
 - Streamlit Secrets obrigatorios: `ACCESS_PASSWORD` (12+ caracteres), `ADMIN_PASSWORD` (diferente) e `GROQ_API_KEY`.
 - Opcional: `GROQ_MODEL = "openai/gpt-oss-20b"`. Modelos previstos: `openai/gpt-oss-120b`, `qwen/qwen3.8-27b`.
 - No site: informe ACCESS_PASSWORD, abra **CSV** (canto superior direito), digite ADMIN_PASSWORD e envie o CSV exportado do Alliance Intel.
+
+
+## Alliance Intel sem CSV: sincronizacao automatica NWG
+
+Uma unica instalacao e necessaria no Supabase que hospeda o LWHUD:
+
+1. No Supabase SQL Editor do projeto usado pelo DS Intel, execute o arquivo
+   `alliance-intel/alliance_reader_setup.sql` deste repositorio.
+   O script valida que o role `lw_ds_streamlit_reader` ja existe e so concede
+   EXECUTE em `lw_ds_private.nwg_alliance_snapshot()`, fixado em NWG/1512.
+   Nao crie um novo usuario e nao use service_role.
+2. Mantenha o `DS_DATABASE_URL` existente nos Streamlit Secrets. Se o DS Intel
+   estava apenas na configuracao legada `DS_SUPABASE_URL`, configure
+   `DS_DATABASE_URL` conforme a secao DS Intel. Nunca coloque a URL no GitHub.
+3. Reinicie o Streamlit e acesse Alliance Intel. Sem CSV, o servidor le a funcao
+   automaticamente quando houver visitas/interacoes apos vencer o cache de 30 min.
+   Visitantes sem atividade nao geram novas consultas nem ha cron.
+4. A tela informa a ultima captura. Se nao houve `al.rank` nas ultimas 24h,
+   usa a projecao de perfis com alerta: nao e uma lista de membros confirmada
+   e pode conter pessoas que deixaram a alianca. Capture `al.rank` no HUD
+   para obter uma lista mais atual.
+5. CSV e mantido somente como alternativa administrativa quando a leitura falhar.
+
+Protecoes: consulta fixa sem parametros; resposta de no maximo 200 jogadores
+e 128 KiB; sem UID na resposta; as credenciais ficam no Streamlit;
+PostgreSQL usa verificacao TLS e timeout de 8 s; cache compartilhado no
+processo por 1.800 s, incluindo erros; no maximo 48 tentativas de leitura
+por dia UTC *por processo*. Reinicios ou multiplas instancias nao
+constituem um limite global de cobranca do Supabase. Nao ha gravacoes
+adicionais no banco.
+
+Validacao somente do numero e da origem, no SQL Editor:
+```sql
+WITH snapshot AS (
+  SELECT lw_ds_private.nwg_alliance_snapshot() AS value
+)
+SELECT jsonb_array_length(value->'players') AS jogadores,
+       value->>'source' AS origem,
+       value->>'snapshot_at' AS ultima_captura
+FROM snapshot;
+```
+
+Testes locais offline: `cd alliance-intel && python -m unittest test_alliance_live -v`.
+A conexao real e o SQL precisam ser validados no projeto de destino;
+este repositorio nao executa migrations automaticamente.
 
 ## Interface
 - Tela principal: chat IA.
