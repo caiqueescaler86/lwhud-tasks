@@ -6,6 +6,7 @@ import hmac
 import io
 import json
 import re
+import ssl
 import tempfile
 import threading
 import time
@@ -60,9 +61,36 @@ class DSReader:
 def reader(url,key,email,password):return DSReader(url,key,email,password)
 
 
+# Official hosted CA URL from Supabase Studio's ssl:certificate_url.
+# Bootstrap over ordinary authenticated HTTPS, then use the dedicated CA for PostgreSQL.
+# This URL never receives the database DSN or credentials.
+SUPABASE_CA_URL = 'https://supabase-downloads.s3-ap-southeast-1.amazonaws.com/prod/ssl/prod-ca-2021.crt'
+
+
+@lru_cache(maxsize=1)
+def supabase_ca_pem():
+    import certifi
+    try:
+        context=ssl.create_default_context(cafile=certifi.where())
+        with urlopen(Request(SUPABASE_CA_URL),timeout=8,context=context) as response:
+            if response.geturl()!=SUPABASE_CA_URL:
+                raise ValueError('Unexpected CA download redirect')
+            raw=response.read(65537)
+        if not raw or len(raw)>65536 or not raw.lstrip().startswith(b'-----BEGIN CERTIFICATE-----'):
+            raise ValueError('Invalid CA download')
+        # Ensure the payload parses as an X.509 certificate bundle.
+        validator=ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        validator.load_verify_locations(cadata=raw.decode('ascii'))
+        if not validator.cert_store_stats().get('x509_ca'):
+            raise ValueError('Downloaded certificate bundle has no CA')
+        return raw
+    except (OSError,ValueError,UnicodeError) as exc:
+        raise RuntimeError('Supabase CA certificate download or validation failed') from exc
+
+
 class DSDatabaseReader:
     """Dedicated PostgreSQL login; queries only the RLS-protected DS match table."""
-    def __init__(self, dsn, connector=None):
+    def __init__(self, dsn, connector=None, ca_loader=None):
         u=urlparse(dsn)
         if (u.scheme not in ('postgresql','postgres') or not u.hostname
                 or not re.fullmatch(r'[a-z0-9-]+\.pooler\.supabase\.com',u.hostname)
@@ -71,6 +99,7 @@ class DSDatabaseReader:
                 or u.query or u.fragment):
             raise ValueError('Use the Supabase session pooler DS reader URI without query parameters')
         self.dsn=dsn;self.connector=connector
+        self.ca_loader=ca_loader or supabase_ca_pem
         self.lock=threading.RLock();self.cached=None;self.cache_until=0
 
     def read(self):
@@ -81,21 +110,23 @@ class DSDatabaseReader:
             if connector is None:
                 import psycopg
                 connector=psycopg.connect
-            import certifi
-            with connector(self.dsn, sslmode='verify-full',sslrootcert=certifi.where(),
-                           connect_timeout=8,autocommit=True,prepare_threshold=None) as conn:
-                with conn.cursor() as cur:
-                    cur.execute("SET statement_timeout = '8s'")
-                    cur.execute("""
-                        SELECT jsonb_build_object(
-                            'match',match_payload,'enemy',enemy_payload,
-                            'enemy_seen',enemy_seen,'updated_at',updated_at,'ends_at',ends_at
-                        )
-                        FROM lw_ds_private.matches
-                        WHERE ends_at > lw_ds_private.cutoff(now())
-                        ORDER BY start_ms,group_id LIMIT 8
-                    """)
-                    rows=[r[0] for r in cur.fetchall()]
+            with tempfile.TemporaryDirectory(prefix='ds-ca-') as folder:
+                ca_path=Path(folder)/'prod-ca-2021.crt'
+                ca_path.write_bytes(self.ca_loader())
+                with connector(self.dsn, sslmode='verify-full',sslrootcert=str(ca_path),
+                               connect_timeout=8,autocommit=True,prepare_threshold=None) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("SET statement_timeout = '8s'")
+                        cur.execute("""
+                            SELECT jsonb_build_object(
+                                'match',match_payload,'enemy',enemy_payload,
+                                'enemy_seen',enemy_seen,'updated_at',updated_at,'ends_at',ends_at
+                            )
+                            FROM lw_ds_private.matches
+                            WHERE ends_at > lw_ds_private.cutoff(now())
+                            ORDER BY start_ms,group_id LIMIT 8
+                        """)
+                        rows=[r[0] for r in cur.fetchall()]
             if (len(rows)>8 or any(not isinstance(r,dict) or not isinstance(r.get('match'),dict) for r in rows)
                     or len(json.dumps(rows,ensure_ascii=False).encode())>524288):
                 raise ValueError('Invalid DS response')

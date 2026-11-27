@@ -1,5 +1,6 @@
 import json
 import unittest
+from pathlib import Path
 from ds_web import DSReader, DSDatabaseReader, intelligence, csv_bytes, safe_reader_error
 
 class Response:
@@ -42,13 +43,22 @@ class DSWebTests(unittest.TestCase):
         def connect(dsn,**kw):
             self.assertEqual(kw['sslmode'],'verify-full')
             self.assertEqual(kw['connect_timeout'],8)
+            self.assertEqual(Path(kw['sslrootcert']).read_bytes(),b'test-ca-pem')
             return Connection()
-        r=DSDatabaseReader('postgresql://lw_ds_streamlit_reader.test:fake@aws-0-us-east-1.pooler.supabase.com:5432/postgres',connector=connect)
+        r=DSDatabaseReader('postgresql://lw_ds_streamlit_reader.test:fake@aws-0-us-east-1.pooler.supabase.com:5432/postgres',connector=connect,ca_loader=lambda:b'test-ca-pem')
         a=r.read();a[0]['match']['starters'].append('changed')
         self.assertEqual(r.read(),[{'match':{'starters':[]}}])
         self.assertEqual(len(calls),2)
         self.assertIn('lw_ds_private.matches',calls[1])
         self.assertIn('LIMIT 8',calls[1])
+    def test_ca_failure_does_not_open_database_connection(self):
+        def fail():
+            raise RuntimeError('Supabase CA certificate download or validation failed')
+        def connect(*args,**kwargs):
+            self.fail('Database connection must not occur if CA loading failed')
+        r=DSDatabaseReader('postgresql://lw_ds_streamlit_reader.test:fake@aws-0-us-east-1.pooler.supabase.com:5432/postgres',connector=connect,ca_loader=fail)
+        with self.assertRaises(RuntimeError):r.read()
+
     def test_database_reader_reject_admin_and_untrusted_host(self):
         for dsn in ('postgresql://postgres.test:fake@aws-0-us-east-1.pooler.supabase.com:5432/postgres',
                     'postgresql://lw_ds_streamlit_reader.test:fake@evil.com:5432/postgres',
