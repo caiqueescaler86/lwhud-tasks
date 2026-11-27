@@ -19,6 +19,7 @@ from core import (
 )
 from i18n import LANGUAGES, field_title, t
 from ds_web import show_ds_intel
+from ds_web_i18n import ui as ds_ui
 
 st.set_page_config(
     page_title="Alliance Intel", page_icon="🛡️",
@@ -243,7 +244,7 @@ if st.session_state.get("previous_language") not in (None, language):
 st.session_state.previous_language = language
 
 require_access_code(language)
-section = st.radio("Module", ["Alliance Intel", "DS Intel"], horizontal=True, key="portal_module")
+section = st.radio(ds_ui(language,"module"), ["Alliance Intel", "DS Intel"], horizontal=True, key="portal_module", format_func=lambda value: ds_ui(language,"alliance_module" if value=="Alliance Intel" else "ds_module"))
 if section == "DS Intel":
     show_ds_intel(language, secret)
     st.stop()

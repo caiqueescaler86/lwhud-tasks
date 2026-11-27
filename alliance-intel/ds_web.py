@@ -18,6 +18,8 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from ds_intel import BUILDINGS, TEXT, plan, validate_plan, export_csv
 from ds_intel_render import render_png
+from ds_cache import SharedSnapshotCache, CacheUnavailable, MAX_BYTES
+from ds_web_i18n import ui, validation_label, diagnostic_label
 
 
 class DSReader:
@@ -29,36 +31,42 @@ class DSReader:
             raise ValueError('DS requires a publishable key, not a secret key')
         if not email or not password:raise ValueError('Missing DS reader credentials')
         self.url,self.key,self.email,self.password=url.rstrip('/'),key,email,password
-        self.opener=opener;self.lock=threading.RLock();self.token='';self.token_until=0;self.cached=None;self.cache_until=0
+        self.opener=opener;self.token='';self.token_until=0;self.cache=SharedSnapshotCache()
     def _post(self,path,body,token=''):
         headers={'apikey':self.key,'Content-Type':'application/json','Accept':'application/json'}
         if token:headers['Authorization']='Bearer '+token
         req=Request(self.url+path,data=json.dumps(body).encode(),headers=headers,method='POST')
         with self.opener(req,timeout=8) as res:
-            raw=res.read(524289)
-            if len(raw)>524288:raise ValueError('DS response too large')
+            raw=res.read(MAX_BYTES+1)
+            if len(raw)>MAX_BYTES:raise CacheUnavailable('DS-TOO-LARGE')
         return json.loads(raw)
     def _login(self):
         obj=self._post('/auth/v1/token?grant_type=password',{'email':self.email,'password':self.password})
         token=obj.get('access_token')
         if not isinstance(token,str) or not token:raise ValueError('Invalid DS reader session')
         self.token=token;self.token_until=time.monotonic()+max(0,min(3600,int(obj.get('expires_in',3600)))-60)
+    def _fetch(self):
+        if not self.token or time.monotonic()>=self.token_until:self._login()
+        try:return self._post('/rest/v1/rpc/lw_ds_read',{},self.token)
+        except HTTPError as exc:
+            if exc.code!=401:raise
+            self._login()
+            return self._post('/rest/v1/rpc/lw_ds_read',{},self.token)
+
     def read(self):
-        with self.lock:
-            if self.cached is not None and time.monotonic()<self.cache_until:return copy.deepcopy(self.cached)
-            if not self.token or time.monotonic()>=self.token_until:self._login()
-            try:rows=self._post('/rest/v1/rpc/lw_ds_read',{},self.token)
-            except HTTPError as exc:
-                if exc.code!=401:raise
-                self._login();rows=self._post('/rest/v1/rpc/lw_ds_read',{},self.token)
-            if not isinstance(rows,list) or len(rows)>8:raise ValueError('Invalid DS response')
-            if any(not isinstance(x,dict) or not isinstance(x.get('match'),dict) for x in rows):raise ValueError('Invalid DS response')
-            self.cached=copy.deepcopy(rows);self.cache_until=time.monotonic()+60
-            return rows
+        return self.cache.read(self._fetch, classify_reader_error)
+
+
+# Serialize factory cache misses, so concurrent first visitors share one budget.
+READER_FACTORY_LOCK = threading.RLock()
 
 
 @lru_cache(maxsize=2)
-def reader(url,key,email,password):return DSReader(url,key,email,password)
+def _reader(url,key,email,password):return DSReader(url,key,email,password)
+
+
+def reader(url,key,email,password):
+    with READER_FACTORY_LOCK:return _reader(url,key,email,password)
 
 
 # Official hosted CA URL from Supabase Studio's ssl:certificate_url.
@@ -100,46 +108,55 @@ class DSDatabaseReader:
             raise ValueError('Use the Supabase session pooler DS reader URI without query parameters')
         self.dsn=dsn;self.connector=connector
         self.ca_loader=ca_loader or supabase_ca_pem
-        self.lock=threading.RLock();self.cached=None;self.cache_until=0
+        self.cache=SharedSnapshotCache()
 
-    def read(self):
-        with self.lock:
-            if self.cached is not None and time.monotonic()<self.cache_until:
-                return copy.deepcopy(self.cached)
-            connector=self.connector
-            if connector is None:
-                import psycopg
-                connector=psycopg.connect
-            with tempfile.TemporaryDirectory(prefix='ds-ca-') as folder:
-                ca_path=Path(folder)/'prod-ca-2021.crt'
-                ca_path.write_bytes(self.ca_loader())
-                with connector(self.dsn, sslmode='verify-full',sslrootcert=str(ca_path),
-                               connect_timeout=8,autocommit=True,prepare_threshold=None) as conn:
-                    with conn.cursor() as cur:
-                        cur.execute("SET statement_timeout = '8s'")
-                        cur.execute("""
-                            SELECT jsonb_build_object(
-                                'match',match_payload,'enemy',enemy_payload,
-                                'enemy_seen',enemy_seen,'updated_at',updated_at,'ends_at',ends_at
-                            )
+    def _fetch(self):
+        connector=self.connector
+        if connector is None:
+            import psycopg
+            connector=psycopg.connect
+        with tempfile.TemporaryDirectory(prefix='ds-ca-') as folder:
+            ca_path=Path(folder)/'prod-ca-2021.crt'
+            ca_path.write_bytes(self.ca_loader())
+            with connector(self.dsn, sslmode='verify-full',sslrootcert=str(ca_path),
+                           connect_timeout=8,autocommit=True,prepare_threshold=None) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SET statement_timeout = '8s'")
+                    cur.execute(f"""
+                        WITH selected AS MATERIALIZED (
+                            SELECT match_payload,enemy_payload,enemy_seen,updated_at,ends_at,start_ms,group_id
                             FROM lw_ds_private.matches
                             WHERE ends_at > lw_ds_private.cutoff(now())
                             ORDER BY start_ms,group_id LIMIT 8
-                        """)
-                        rows=[r[0] for r in cur.fetchall()]
-            if (len(rows)>8 or any(not isinstance(r,dict) or not isinstance(r.get('match'),dict) for r in rows)
-                    or len(json.dumps(rows,ensure_ascii=False).encode())>524288):
-                raise ValueError('Invalid DS response')
-            self.cached=copy.deepcopy(rows);self.cache_until=time.monotonic()+60
-            return rows
+                        ), payload AS (
+                            SELECT coalesce(jsonb_agg(jsonb_build_object(
+                                'match',match_payload,'enemy',enemy_payload,
+                                'enemy_seen',enemy_seen,'updated_at',updated_at,'ends_at',ends_at
+                            ) ORDER BY start_ms,group_id),'[]'::jsonb) AS data
+                            FROM selected
+                        )
+                        SELECT CASE WHEN octet_length(data::text) <= {MAX_BYTES}
+                                    THEN data ELSE NULL END FROM payload
+                    """)
+                    row=cur.fetchone()
+        if not row or row[0] is None:raise CacheUnavailable('DS-TOO-LARGE')
+        return row[0]
+
+    def read(self):
+        return self.cache.read(self._fetch, classify_reader_error)
 
 
 @lru_cache(maxsize=2)
-def database_reader(dsn):return DSDatabaseReader(dsn)
+def _database_reader(dsn):return DSDatabaseReader(dsn)
+
+
+def database_reader(dsn):
+    with READER_FACTORY_LOCK:return _database_reader(dsn)
 
 
 def safe_reader_error(exc, configured):
     # Never return an exception message, DSN, connection host or credentials.
+    if isinstance(exc,CacheUnavailable):return exc.code + ": reader refresh deferred."
     if not configured:
         return "DS-CONFIG-MISSING: configure DS_DATABASE_URL in Streamlit Secrets."
     if isinstance(exc, ImportError):
@@ -174,6 +191,10 @@ def safe_reader_error(exc, configured):
     return "DS-UNKNOWN: reader failed; check administrator diagnostics."
 
 
+def classify_reader_error(exc):
+    return safe_reader_error(exc,True).split(':',1)[0]
+
+
 def intelligence(row):
     intel=copy.deepcopy(row.get('enemy') or {})
     if intel.get('status') not in ('partial','worst'):return dict(status='generic',top=[],threats=[],known=0,expected=None)
@@ -194,15 +215,16 @@ def match_key(row):
 def show_ds_intel(language,secret):
     import streamlit as st
     lang=language if language in TEXT else 'en';t=TEXT[lang]
-    st.title('DS Intel')
+    L=lambda key,**kwargs:ui(lang,key,**kwargs)
+    st.title(L('ds_module'))
     # Reuse the existing portal gate, including password rotation invalidation.
     # Check again defensively before constructing the server-side reader.
     password=secret('ACCESS_PASSWORD')
     digest=hashlib.sha256(password.encode('utf-8')).hexdigest()
     if (len(password)<12 or not st.session_state.get('access_granted')
             or not hmac.compare_digest(str(st.session_state.get('access_fingerprint','')),digest)):
-        st.info('Sign in to the Alliance Intel portal first.');return
-    if st.button('Sign out',key='ds_portal_logout'):
+        st.info(L('login'));return
+    if st.button(L('signout'),key='ds_portal_logout'):
         st.session_state.access_granted=False
         st.session_state.access_fingerprint=''
         st.session_state.history=[]
@@ -215,73 +237,77 @@ def show_ds_intel(language,secret):
         dsn=secret('DS_DATABASE_URL')
         if dsn:
             configured=True
-            rows=database_reader(dsn).read()
+            active_reader=database_reader(dsn)
+            rows=active_reader.read()
         else:
             cfg=[secret(k) for k in ('DS_SUPABASE_URL','DS_SUPABASE_PUBLISHABLE_KEY','DS_READ_EMAIL','DS_READ_PASSWORD')]
             configured=all(cfg)
             if not configured:raise ValueError("Missing reader configuration")
-            rows=reader(*cfg).read()
+            active_reader=reader(*cfg)
+            rows=active_reader.read()
     except Exception as exc:
-        st.warning(safe_reader_error(exc,configured))
-        if st.button("Retry DS connection",key="ds_retry_connection"):
+        st.warning(diagnostic_label(lang,safe_reader_error(exc,configured).split(':',1)[0]))
+        if st.button(L("retry"),key="ds_retry_connection"):
             st.rerun()
         return
-    st.caption('Weekly snapshots · refresh cache: 60 seconds · no Groq')
-    if not rows:st.info('No Desert Storm matches published for this week. Open the DS screens in the HUD.');return
+    st.caption(L('cache'))
+    if active_reader.cache.status=='stale':
+        st.warning(L('stale',reason=diagnostic_label(lang,active_reader.cache.code)))
+    if not rows:st.info(L('empty'));return
     def label(i):
         r=rows[i]['match'];opp=r.get('enemy') or {};own=r.get('own') or {}
         stamp=datetime.fromtimestamp(r['match']['start_ms']/1000,timezone(timedelta(hours=-3)))
         return f"{t['team']} {r['team']} | {own.get('tag','?')} vs {opp.get('tag','?')} #{opp.get('server_id','?')} | {stamp:%d/%m %H:%M} BRT"
-    row=rows[st.selectbox('Match',range(len(rows)),format_func=label,key='ds_selected_match')];m=row['match'];intel=intelligence(row);key=match_key(row)
-    st.caption(f"Roster: {m.get('roster_seen','—')} | Updated: {row.get('updated_at','—')}")
+    row=rows[st.selectbox(L('match'),range(len(rows)),format_func=label,key='ds_selected_match')];m=row['match'];intel=intelligence(row);key=match_key(row)
+    st.caption(L('roster_at',roster=m.get('roster_seen','—'),updated=row.get('updated_at','—')))
     a,b=st.columns(2);a.metric(t['active'],len(m['starters']));b.metric(t['reserve'],len(m['reserves']))
     def table(players):
         period=m['match'].get('period')
-        return [{'Player':p['name'],'Hero Power':p.get('hero_power'),'Army Power':p.get('army_power'),'Total Power':p.get('total_power'),'Preferred periods':', '.join(map(str,p.get('preferred_times',[]))),'Assigned period':period} for p in players]
+        return [{L('player'):p['name'],L('hero_power'):p.get('hero_power'),L('army_power'):p.get('army_power'),L('total_power'):p.get('total_power'),L('preferred_periods'):', '.join(map(str,p.get('preferred_times',[]))),L('assigned_period'):period} for p in players]
     st.subheader(t['active']);st.dataframe(table(m['starters']),hide_index=True,use_container_width=True)
     st.subheader(t['reserve']);st.dataframe(table(m['reserves']),hide_index=True,use_container_width=True)
     own=m.get('own') or {};opp=m.get('enemy') or {}
-    st.subheader('Enemy Intel');st.dataframe([{'Alliance':p.get('tag'),'Server':p.get('server_id'),'Total Power':p.get('total_power'),'Army Power':p.get('army_power'),'Matchmaking Strength':p.get('strength')} for p in (own,opp)],hide_index=True,use_container_width=True)
-    st.caption(t[intel['status']]);st.caption(f"Hero Power coverage: {intel.get('known',0)}/{intel.get('expected') or '?'}")
+    st.subheader(L('enemy_intel'));st.dataframe([{L('alliance'):p.get('tag'),L('server'):p.get('server_id'),L('total_power'):p.get('total_power'),L('army_power'):p.get('army_power'),L('strength'):p.get('strength')} for p in (own,opp)],hide_index=True,use_container_width=True)
+    st.caption(t[intel['status']]);st.caption(L('coverage',known=intel.get('known',0),expected=intel.get('expected') or '?'))
     if intel['top']:
         threat={p['uid'] for p in intel['threats']}
-        st.dataframe([{'Player':p['name'],'Hero Power':p.get('hero_power'),'Potential threat':p['uid'] in threat} for p in intel['top']],hide_index=True,use_container_width=True)
-    else:st.info(f"Capture the rival alliance {opp.get('tag','?')} on server {opp.get('server_id','?')} in Alliance Intel, then refresh enemy data in the HUD.")
-    st.download_button('Export roster CSV',csv_bytes(m,None,intel),file_name=f"DS_{m['team']}_roster.csv",mime='text/csv',key='ds_roster_'+key)
-    st.subheader(t['title']);st.caption('Personal draft, not shared or published as an official plan.')
+        st.dataframe([{L('player'):p['name'],L('hero_power'):p.get('hero_power'),L('threat'):L('yes') if p['uid'] in threat else L('no')} for p in intel['top']],hide_index=True,use_container_width=True)
+    else:st.info(L('capture_rival',tag=opp.get('tag','?'),server=opp.get('server_id','?')))
+    st.download_button(L('roster_csv'),csv_bytes(m,None,intel),file_name=f"DS_{m['team']}_roster.csv",mime='text/csv',key='ds_roster_'+key)
+    st.subheader(t['title']);st.caption(L('draft'))
     if st.session_state.get('ds_current_key')!=key:
         for k in list(st.session_state):
             if str(k).startswith(('ds_editor_','ds_absent_','ds_blocked_')):del st.session_state[k]
         st.session_state.ds_current_key=key;st.session_state.ds_plan=None;st.session_state.ds_revision=0
     names={p['uid']:p['name'] for p in m['starters']}
-    absent=st.multiselect('Absent starters',list(names),format_func=names.get,key='ds_absent_'+key)
-    blocked=st.multiselect('Contested objectives / alternative targets',list(BUILDINGS),format_func=lambda k:f"{k} · {t[BUILDINGS[k][0]]}",key='ds_blocked_'+key)
-    if st.button('Generate plan',key='ds_generate_'+key):
+    absent=st.multiselect(L('absent'),list(names),format_func=names.get,key='ds_absent_'+key)
+    blocked=st.multiselect(L('blocked'),list(BUILDINGS),format_func=lambda k:f"{k} · {t[BUILDINGS[k][0]]}",key='ds_blocked_'+key)
+    if st.button(L('generate'),key='ds_generate_'+key):
         try:
             st.session_state.ds_plan=plan(m,intel,blocked,absent);st.session_state.ds_revision+=1
             for k in list(st.session_state):
                 if str(k).startswith('ds_editor_'):del st.session_state[k]
-        except ValueError as exc:st.error(str(exc))
+        except ValueError as exc:st.error(validation_label(lang,exc))
     p=copy.deepcopy(st.session_state.get('ds_plan'))
     if not p:return
-    if set(p['blocked'])!=set(blocked) or set(p['absent'])!=set(absent):st.info('Settings changed. Generate a new plan.');return
+    if set(p['blocked'])!=set(blocked) or set(p['absent'])!=set(absent):st.info(L('regenerate'));return
     roles={'capture':t['capture'],'clear':t['clear'],'support':t['support']};inverse={v:k for k,v in roles.items()}
     phases=[]
     for i,phase in enumerate(p['phases']):
         st.caption(f"{t['phase']} {i+1} · {'00:00–10:00' if i==0 else '10:00–30:00'}")
-        view=[{'Player':r['name'],'Hero Power':r['hero_power'],'Role':roles[r['role']],'Target':r['target']} for r in phase]
-        edited=st.data_editor(view,hide_index=True,num_rows='fixed',disabled=['Player','Hero Power'],use_container_width=True,column_config={'Role':st.column_config.SelectboxColumn('Role',options=list(roles.values()),required=True),'Target':st.column_config.TextColumn('Target',required=True)},key=f'ds_editor_{key}_{lang}_{st.session_state.ds_revision}_{i}')
-        try:phases.append([dict(old,role=inverse[new['Role']],target=new['Target'].strip().upper()) for old,new in zip(phase,edited,strict=True)])
-        except (KeyError,TypeError,ValueError,AttributeError):st.error('Invalid plan edit');return
+        view=[{'Player':r['name'],'Hero Power':r['hero_power'],'Role':roles[r['role']],'Target':L('mobile') if r['target']=='MOBILE' else r['target']} for r in phase]
+        edited=st.data_editor(view,hide_index=True,num_rows='fixed',disabled=['Player','Hero Power'],use_container_width=True,column_config={'Player':st.column_config.TextColumn(L('player')),'Hero Power':st.column_config.NumberColumn(L('hero_power')),'Role':st.column_config.SelectboxColumn(L('role'),options=list(roles.values()),required=True),'Target':st.column_config.TextColumn(L('target'),required=True)},key=f'ds_editor_{key}_{lang}_{st.session_state.ds_revision}_{i}')
+        try:phases.append([dict(old,role=inverse[new['Role']],target='MOBILE' if new['Target'].strip().casefold()==L('mobile').casefold() else new['Target'].strip().upper()) for old,new in zip(phase,edited,strict=True)])
+        except (KeyError,TypeError,ValueError,AttributeError):st.error(L('edit_error'));return
     p['phases']=phases
     try:validate_plan(p,m)
-    except ValueError as exc:st.error(str(exc));return
-    st.download_button('Export plan CSV',csv_bytes(m,p,intel),file_name=f"DS_{m['team']}_plan.csv",mime='text/csv')
+    except ValueError as exc:st.error(validation_label(lang,exc));return
+    st.download_button(L('plan_csv'),csv_bytes(m,p,intel),file_name=f"DS_{m['team']}_plan.csv",mime='text/csv')
     # Render only on request; image bytes belong to the user's session.
     image_key=hashlib.sha256(json.dumps([p,lang,key],sort_keys=True,ensure_ascii=False).encode()).hexdigest()
-    if st.button('Preview / generate PNG'):
+    if st.button(L('preview')):
         try:
             out=io.BytesIO();render_png(out,m,p,lang);st.session_state.ds_image=(image_key,out.getvalue())
-        except (OSError,RuntimeError,ValueError) as exc:st.error('PNG rendering unavailable. Check installed fonts and Pillow.')
+        except (OSError,RuntimeError,ValueError) as exc:st.error(L('png_error'))
     if st.session_state.get('ds_image',(None,))[0]==image_key:
-        raw=st.session_state.ds_image[1];st.image(raw,use_container_width=True);st.download_button('Export PNG',raw,file_name=f"DS_{m['team']}_{lang}.png",mime='image/png')
+        raw=st.session_state.ds_image[1];st.image(raw,use_container_width=True);st.download_button(L('png'),raw,file_name=f"DS_{m['team']}_{lang}.png",mime='image/png')

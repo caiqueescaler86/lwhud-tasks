@@ -35,7 +35,7 @@ class DSWebTests(unittest.TestCase):
             def __enter__(self):return self
             def __exit__(self,*args):pass
             def execute(self,sql):calls.append(sql)
-            def fetchall(self):return [({'match':{'starters':[]}},)]
+            def fetchone(self):return ([{'match':{'starters':[]}}],)
         class Connection:
             def __enter__(self):return self
             def __exit__(self,*args):pass
@@ -51,6 +51,7 @@ class DSWebTests(unittest.TestCase):
         self.assertEqual(len(calls),2)
         self.assertIn('lw_ds_private.matches',calls[1])
         self.assertIn('LIMIT 8',calls[1])
+        self.assertIn('octet_length(data::text) <= 131072',calls[1])
     def test_ca_failure_does_not_open_database_connection(self):
         def fail():
             raise RuntimeError('Supabase CA certificate download or validation failed')
